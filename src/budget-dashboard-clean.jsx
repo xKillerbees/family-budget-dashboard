@@ -3378,7 +3378,7 @@ function Settings({ isMobile }) {
 
 
       {/* Take-Home */}
-      <Card glow={accentSet}>
+      <Card glow={accentSet} style={{marginTop:16}}>
         <Label>Monthly Take-Home Pay</Label>
         <div style={{fontSize:12,color:MUTED,marginBottom:10}}>Your net pay after taxes each month. Used to compute surplus/gap.</div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
