@@ -2876,18 +2876,25 @@ function NewCatInput({ onAdd, allCats }) {
     setVal(""); setIcon("📁"); setColor("#94a3b8");
   };
   return (
-    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-      <input value={icon} onChange={e=>setIcon(e.target.value)} placeholder="📁"
-        style={{width:40,background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"6px 4px",color:TEXT,fontSize:18,outline:"none",textAlign:"center"}}/>
-      <input type="color" value={color} onChange={e=>setColor(e.target.value)}
-        style={{width:40,height:36,background:"transparent",border:`1px solid ${BORDER}`,borderRadius:8,cursor:"pointer",padding:2,flexShrink:0}}/>
-      <input value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}
-        placeholder="New category name…"
-        style={{flex:1,minWidth:120,background:BG,border:`1px solid #06b6d4`,borderRadius:8,padding:"7px 12px",color:TEXT,fontSize:13,outline:"none"}}/>
-      <button onClick={submit}
-        style={{padding:"7px 16px",borderRadius:8,background:"#06b6d4",color:"#0d1117",fontWeight:800,fontSize:13,border:"none",cursor:"pointer"}}>
-        + Add
-      </button>
+    <div>
+      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+        <div style={{width:40,textAlign:"center",fontSize:10,color:MUTED}}>Icon</div>
+        <div style={{width:40,textAlign:"center",fontSize:10,color:MUTED}}>Color</div>
+        <div style={{flex:1,fontSize:10,color:MUTED}}>Name</div>
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+        <input value={icon} onChange={e=>setIcon(e.target.value)} placeholder="📁"
+          style={{width:40,background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"6px 4px",color:TEXT,fontSize:18,outline:"none",textAlign:"center"}}/>
+        <input type="color" value={color} onChange={e=>setColor(e.target.value)}
+          style={{width:40,height:36,background:"transparent",border:`1px solid ${BORDER}`,borderRadius:8,cursor:"pointer",padding:2,flexShrink:0}}/>
+        <input value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}
+          placeholder="New category name…"
+          style={{flex:1,minWidth:120,background:BG,border:`1px solid #06b6d4`,borderRadius:8,padding:"7px 12px",color:TEXT,fontSize:13,outline:"none"}}/>
+        <button onClick={submit}
+          style={{padding:"7px 16px",borderRadius:8,background:"#06b6d4",color:"#0d1117",fontWeight:800,fontSize:13,border:"none",cursor:"pointer"}}>
+          + Add
+        </button>
+      </div>
     </div>
   );
 }
@@ -3053,6 +3060,11 @@ function Settings({ isMobile }) {
       <Card glow="#06b6d4" style={{marginTop:16}}>
         <Label>🏷️ Custom Categories</Label>
         <div style={{fontSize:12,color:MUTED,marginBottom:12}}>Add categories with a custom icon and color. They appear everywhere categories are listed.</div>
+        <div style={{fontSize:11,color:MUTED,background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 12px",marginBottom:12,lineHeight:1.6}}>
+          <strong style={{color:TEXT}}>Icon tip:</strong> paste any emoji into the icon box.
+          {" "}On <strong style={{color:TEXT}}>Windows</strong> press <kbd style={{background:"#1e2535",border:`1px solid ${BORDER}`,borderRadius:4,padding:"1px 5px",fontSize:10,fontFamily:"monospace"}}>Win + .</kbd> to open the emoji picker.
+          {" "}On <strong style={{color:TEXT}}>Mac</strong> press <kbd style={{background:"#1e2535",border:`1px solid ${BORDER}`,borderRadius:4,padding:"1px 5px",fontSize:10,fontFamily:"monospace"}}>Ctrl + Cmd + Space</kbd>.
+        </div>
         {customCats.length > 0 && (
           <div style={{marginBottom:12}}>
             <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom: deletingCat ? 12 : 0}}>
