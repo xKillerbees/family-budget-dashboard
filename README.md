@@ -8,7 +8,7 @@ A personal finance dashboard built with React and Recharts. Track monthly spendi
 
 ## Live Demo
 
-> [https://roberthsherman.github.io/family-budget-dashboard](https://roberthsherman.github.io/family-budget-dashboard)
+> [https://xKillerbees.github.io/family-budget-dashboard](https://xKillerbees.github.io/family-budget-dashboard)
 
 *(May take a moment to load on first visit after a new deployment.)*
 
@@ -36,7 +36,7 @@ Just visit the live demo link above. No account, no install, no data leaves your
 ## Local Development
 
 ```bash
-git clone https://github.com/roberthsherman/family-budget-dashboard.git
+git clone https://github.com/xKillerbees/family-budget-dashboard.git
 cd family-budget-dashboard
 npm install
 npm run dev
