@@ -107,10 +107,10 @@ const ABA_OPTIONS = [
 ];
 
 const PAYOFFS_INIT = [
-  { id:"p1", name:"Car Loan",     payment:460.00,  balance:2280,   balanceStr:"$2,280",  date:"Jul 2026",  months:"5 left",  pct:95, color:"#22c55e" },
-  { id:"p2", name:"Credit Card",  payment:151.22,  balance:1586,   balanceStr:"$1,586",  date:"Jan 2027",  months:"11 left", pct:65, color:"#a78bfa" },
-  { id:"p3", name:"Auto Loan",    payment:507.03,  balance:17670,  balanceStr:"$17,670", date:"Mar 2029",  months:"37 left", pct:30, color:"#64748b" },
-  { id:"p4", name:"Student Loan", payment:201.09,  balance:25000,  balanceStr:"$25,000", date:"Long-term", months:"TBD",     pct:5,  color:"#475569" },
+  { id:"p1", name:"Car Loan",     payment:460.00,  balance:2280,   origBalance:2280,   balanceStr:"$2,280",  date:"Jul 2026",  months:"5 left",  pct:95, color:"#22c55e", keywords:"" },
+  { id:"p2", name:"Credit Card",  payment:151.22,  balance:1586,   origBalance:1586,   balanceStr:"$1,586",  date:"Jan 2027",  months:"11 left", pct:65, color:"#a78bfa", keywords:"" },
+  { id:"p3", name:"Auto Loan",    payment:507.03,  balance:17670,  origBalance:17670,  balanceStr:"$17,670", date:"Mar 2029",  months:"37 left", pct:30, color:"#64748b", keywords:"" },
+  { id:"p4", name:"Student Loan", payment:201.09,  balance:25000,  origBalance:25000,  balanceStr:"$25,000", date:"Long-term", months:"TBD",     pct:5,  color:"#475569", keywords:"" },
 ];
 
 const CAT_COLORS = {
@@ -821,7 +821,7 @@ function Scenarios({ wide, isMobile }) {
                         style={{background:"transparent",border:"none",borderBottom:`1px solid ${BORDER}`,color:TEXT,fontSize:15,fontWeight:700,flex:1,minWidth:0,outline:"none",paddingBottom:2}}/>
                     </div>
                     <div style={{display:"flex",gap:6}}>
-                      {["⛪","📅","🏕️","✈️","🎪","📋"].map(e=>(
+                      {["🏖️","✈️","🏕️","🎉","🎪","📋"].map(e=>(
                         <button key={e} onClick={()=>updatePlan(plan.id,"emoji",e)} style={{background:"transparent",border:"none",fontSize:16,cursor:"pointer",opacity:plan.emoji===e?1:.4,padding:"2px"}}>{e}</button>
                       ))}
                       <button onClick={()=>removePlan(plan.id)} style={{marginLeft:4,padding:"3px 8px",borderRadius:6,fontSize:11,cursor:"pointer",background:"#ef444411",color:"#ef4444",border:"1px solid #ef444422"}}>✕</button>
@@ -839,9 +839,10 @@ function Scenarios({ wide, isMobile }) {
                           style={{background:"transparent",border:"none",color:TEXT,fontSize:20,fontWeight:900,width:"100%",outline:"none",fontVariantNumeric:"tabular-nums"}}/>
                       </div>
                     </div>
-                    <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
-                      {showTithe && <button onClick={()=>updatePlan(plan.id,"startingFunds",t2Balance)} style={{padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",background:"#7c6af722",color:"#7c6af7",border:"1px solid #7c6af733"}}>⛪ 2nd Tithe</button>}
-                      <button onClick={()=>updatePlan(plan.id,"startingFunds",Math.max(0,normSurplus))} style={{padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e33"}}>📅 Surplus</button>
+                    <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end",alignItems:"center"}}>
+                      <span style={{fontSize:10,color:MUTED}}>Quick fill:</span>
+                      {showTithe && <button onClick={()=>updatePlan(plan.id,"startingFunds",t2Balance)} style={{padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",background:"#7c6af722",color:"#7c6af7",border:"1px solid #7c6af733"}}>2nd Tithe</button>}
+                      <button onClick={()=>updatePlan(plan.id,"startingFunds",Math.max(0,normSurplus))} style={{padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e33"}}>Surplus</button>
                     </div>
                   </div>
 
@@ -1136,7 +1137,7 @@ function Payoffs({wide}) {
   useEffect(() => { ls.setJSON("budget_payoffEnabled", [...enabled]); }, [enabled]);
   const [editId,  setEditId]    = useState(null);
   const [adding,  setAdding]    = useState(false);
-  const [newDebt, setNewDebt]   = useState({ name:"", payment:"", balance:"", date:"", months:"", pct:50, color:"#22c55e" });
+  const [newDebt, setNewDebt]   = useState({ name:"", payment:"", balance:"", date:"", months:"", pct:50, color:"#22c55e", keywords:"" });
 
   const toggle = id => setEnabled(prev => { const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; });
 
@@ -1152,25 +1153,43 @@ function Payoffs({wide}) {
   const addPayoff = () => {
     if(!newDebt.name || !newDebt.payment) return;
     const id = "p" + Date.now();
+    const origBal = parseFloat((newDebt.balance||"0").replace(/[$,]/g,""))||0;
     const p = {
       id,
-      name:     newDebt.name,
-      payment:  parseFloat(newDebt.payment)||0,
-      balance:  parseFloat((newDebt.balance||"0").replace(/[$,]/g,""))||0,
-      balanceStr: newDebt.balance || "$0",
-      date:     newDebt.date || "TBD",
-      months:   newDebt.months || "TBD",
-      pct:      parseInt(newDebt.pct)||50,
-      color:    newDebt.color,
+      name:        newDebt.name,
+      payment:     parseFloat(newDebt.payment)||0,
+      balance:     origBal,
+      origBalance: origBal,
+      balanceStr:  newDebt.balance || "$0",
+      date:        newDebt.date || "TBD",
+      months:      newDebt.months || "TBD",
+      pct:         parseInt(newDebt.pct)||0,
+      color:       newDebt.color,
+      keywords:    newDebt.keywords || "",
     };
     setPayoffs(prev => [...prev, p]);
     setEnabled(prev => new Set([...prev, id]));
-    setNewDebt({ name:"", payment:"", balance:"", date:"", months:"", pct:50, color:"#22c55e" });
+    setNewDebt({ name:"", payment:"", balance:"", date:"", months:"", pct:50, color:"#22c55e", keywords:"" });
     setAdding(false);
   };
 
+  const allTxns = [...checkTxns, ...ccTxns];
+
+  // Compute live balance and pct for a payoff from its keyword filter
+  const getPayoffStats = (p) => {
+    const orig = p.origBalance || p.balance || 0;
+    const kws = (p.keywords || "").split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
+    if (!kws.length || orig === 0) return { currentBalance: p.balance, pct: p.pct, paid: 0, auto: false };
+    const paid = allTxns
+      .filter(t => kws.some(kw => (t.desc || "").toLowerCase().includes(kw)))
+      .reduce((s, t) => s + (t.amount > 0 ? t.amount : 0), 0);
+    const currentBalance = Math.max(0, orig - paid);
+    const pct = Math.min(100, Math.round((paid / orig) * 100));
+    return { currentBalance, pct, paid, auto: true };
+  };
+
   const totalRelief  = payoffs.filter(p=>enabled.has(p.id)).reduce((s,p)=>s+p.payment,0);
-  const actualGroceries = [...checkTxns, ...ccTxns].filter(t => t.month === selectedMonth && t.cat === "Groceries").reduce((s,t) => s+t.amount, 0);
+  const actualGroceries = allTxns.filter(t => t.month === selectedMonth && t.cat === "Groceries").reduce((s,t) => s+t.amount, 0);
   const grocerySave  = Math.max(0, actualGroceries - groceryGoal);
   const projSurplus  = normSurplus + grocerySave + totalRelief;
   const projColor    = projSurplus>=0?"#22c55e":projSurplus>-500?"#f59e0b":"#ef4444";
@@ -1236,6 +1255,7 @@ function Payoffs({wide}) {
         {payoffs.map(p => {
           const isOn   = enabled.has(p.id);
           const isEdit = editId === p.id;
+          const stats  = getPayoffStats(p);
           return (
             <Card key={p.id} style={{opacity:isOn?1:0.6,transition:"opacity .2s",border:`1px solid ${isEdit?p.color+"66":BORDER}`}}>
               {/* Header row */}
@@ -1249,7 +1269,10 @@ function Payoffs({wide}) {
                         style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"5px 10px",color:TEXT,fontSize:16,fontWeight:700,width:140,outline:"none"}}/>
                     : <div>
                         <div style={{fontSize:15,fontWeight:700,color:TEXT}}>{p.name}</div>
-                        <div style={{fontSize:12,color:MUTED}}>Balance: {p.balanceStr || fmt(p.balance)}</div>
+                        <div style={{fontSize:12,color:MUTED}}>
+                          Balance: {fmt(stats.currentBalance)}
+                          {stats.auto && <span style={{marginLeft:5,fontSize:10,background:p.color+"22",color:p.color,borderRadius:4,padding:"1px 5px",fontWeight:700}}>auto</span>}
+                        </div>
                       </div>
                   }
                 </div>
@@ -1273,19 +1296,31 @@ function Payoffs({wide}) {
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
                   <FieldInput label="Monthly Payment $" val={p.payment}
                     onChange={v=>updateField(p.id,"payment",parseFloat(v)||0)} type="number" placeholder="460"/>
-                  <FieldInput label="Current Balance" val={p.balanceStr}
-                    onChange={v=>updateField(p.id,"balanceStr",v)} placeholder="$2,280"/>
+                  <FieldInput label="Orig. Balance $" val={p.origBalance ?? p.balance}
+                    onChange={v=>{const n=parseFloat(v)||0; updateField(p.id,"origBalance",n); updateField(p.id,"balance",n);}} type="number" placeholder="12000"/>
                   <FieldInput label="Payoff Date" val={p.date}
                     onChange={v=>updateField(p.id,"date",v)} placeholder="Jul 2026"/>
                   <FieldInput label="Time Remaining" val={p.months}
                     onChange={v=>updateField(p.id,"months",v)} placeholder="5 left"/>
-                  <div>
-                    <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>Progress %</div>
-                    <input type="range" min={0} max={100} value={p.pct}
-                      onChange={e=>updateField(p.id,"pct",parseInt(e.target.value))}
-                      style={{"--thumb":p.color,width:"100%"}}/>
-                    <div style={{fontSize:11,color:p.color,textAlign:"right"}}>{p.pct}%</div>
+                  <div style={{gridColumn:"1/-1"}}>
+                    <FieldInput label="Filter Keywords (comma-separated)" val={p.keywords || ""}
+                      onChange={v=>updateField(p.id,"keywords",v)} placeholder="car loan, capital one, auto pay"/>
+                    <div style={{fontSize:10,color:MUTED,marginTop:4}}>Transactions whose description contains any keyword count as payments. Leave blank to set progress manually.</div>
                   </div>
+                  {(p.keywords || "").trim() ? (
+                    <div>
+                      <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>Progress %</div>
+                      <div style={{fontSize:13,color:p.color,fontWeight:700}}>{getPayoffStats(p).pct}% — auto from {getPayoffStats(p).paid > 0 ? fmt(getPayoffStats(p).paid)+" paid" : "transactions"}</div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>Progress % (manual)</div>
+                      <input type="range" min={0} max={100} value={p.pct}
+                        onChange={e=>updateField(p.id,"pct",parseInt(e.target.value))}
+                        style={{"--thumb":p.color,width:"100%"}}/>
+                      <div style={{fontSize:11,color:p.color,textAlign:"right"}}>{p.pct}%</div>
+                    </div>
+                  )}
                   <div>
                     <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:6}}>Color</div>
                     <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
@@ -1311,10 +1346,10 @@ function Payoffs({wide}) {
                 </div>
               )}
 
-              <PBar pct={p.pct} color={isOn?p.color:MUTED} h={7}/>
+              <PBar pct={stats.pct} color={isOn?p.color:MUTED} h={7}/>
               <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
                 <span style={{fontSize:11,color:DIM}}>Progress toward payoff</span>
-                <span style={{fontSize:11,color:DIM}}>{p.pct}%</span>
+                <span style={{fontSize:11,color:DIM}}>{stats.pct}%</span>
               </div>
             </Card>
           );
@@ -1327,11 +1362,11 @@ function Payoffs({wide}) {
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
               <FieldInput label="Name" val={newDebt.name} onChange={v=>setNewDebt(p=>({...p,name:v}))} placeholder="Car loan"/>
               <FieldInput label="Monthly Payment $" val={newDebt.payment} onChange={v=>setNewDebt(p=>({...p,payment:v}))} type="number" placeholder="250"/>
-              <FieldInput label="Balance" val={newDebt.balance} onChange={v=>setNewDebt(p=>({...p,balance:v}))} placeholder="$12,000"/>
+              <FieldInput label="Orig. Balance $" val={newDebt.balance} onChange={v=>setNewDebt(p=>({...p,balance:v}))} placeholder="12000"/>
               <FieldInput label="Payoff Date" val={newDebt.date} onChange={v=>setNewDebt(p=>({...p,date:v}))} placeholder="Dec 2027"/>
               <FieldInput label="Time Remaining" val={newDebt.months} onChange={v=>setNewDebt(p=>({...p,months:v}))} placeholder="22 left"/>
               <div>
-                <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>Progress %</div>
+                <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>Progress % (manual)</div>
                 <input type="range" min={0} max={100} value={newDebt.pct}
                   onChange={e=>setNewDebt(p=>({...p,pct:parseInt(e.target.value)}))}
                   style={{"--thumb":newDebt.color,width:"100%"}}/>
@@ -1347,6 +1382,10 @@ function Payoffs({wide}) {
                     }}/>
                   ))}
                 </div>
+              </div>
+              <div style={{gridColumn:"1/-1"}}>
+                <FieldInput label="Filter Keywords (comma-separated)" val={newDebt.keywords} onChange={v=>setNewDebt(p=>({...p,keywords:v}))} placeholder="car loan, capital one, auto pay"/>
+                <div style={{fontSize:10,color:MUTED,marginTop:4}}>Transactions matching these keywords auto-compute the progress bar. Leave blank to set manually.</div>
               </div>
             </div>
             <div style={{display:"flex",gap:8}}>
