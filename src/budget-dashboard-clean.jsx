@@ -3175,7 +3175,7 @@ function Settings({ isMobile }) {
       </Card>
 
       {/* API Key */}
-      <Card glow="#818cf8">
+      <Card glow="#818cf8" style={{marginTop:16}}>
         <Label>🔑 Anthropic API Key</Label>
         <div style={{fontSize:12,color:MUTED,marginBottom:12}}>Stored in your browser localStorage — survives JSX file replacements. Required for AI tips and PDF statement import.</div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
