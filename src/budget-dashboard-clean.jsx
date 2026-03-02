@@ -74,9 +74,9 @@ const SCENARIO_DEFS = [
 
 // ABA: $35/visit, $7,000 individual OOP cap, resets every Jan 1
 // Visits/mo = daysPerWeek × (52/12)
-function buildABASchedule(daysPerWeek) {
-  const COST_PER_VISIT = 35;
-  const OOP_CAP = 7000;
+function buildABASchedule(daysPerWeek, settings) {
+  const COST_PER_VISIT = settings?.costPerVisit ?? 35;
+  const OOP_CAP = settings?.oopCap ?? 7000;
   const visitsPerMonth = daysPerWeek * (52 / 12);
   const fullMonthCost = Math.round(visitsPerMonth * COST_PER_VISIT);
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -267,8 +267,8 @@ function CashFlowSankey({ viewMode }) {
   const labelY = lpos.map(y => Math.max(40, Math.min(H - 12, y)));
 
   return (
-    <div style={{ width:"100%", overflowX:"auto" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:"auto", display:"block" }}>
+    <div style={{ width:"100%" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:"auto", maxHeight:"calc(100vh - 220px)", display:"block" }}>
         <defs>
           {allDest.map(d => (
             <linearGradient key={d.name} id={`sg-${d.name.replace(/[\s&/]/g,"_")}`} x1="0%" y1="0%" x2="100%" y2="0%">
@@ -1006,7 +1006,8 @@ function Scenarios({ wide, isMobile }) {
 function ABAPlanner({wide}) {
   const [sel, setSel] = useState(0);
   const opt = ABA_OPTIONS[sel];
-  const { schedule, annualCost, capHit, fullMonthCost } = useMemo(()=>buildABASchedule(opt.daysPerWeek),[sel]);
+  const { abaSettings } = useBudget();
+  const { schedule, annualCost, capHit, fullMonthCost } = useMemo(()=>buildABASchedule(opt.daysPerWeek, abaSettings),[sel, abaSettings]);
 
   const capMonthLabel = useMemo(()=>{
     if(!capHit) return "No cap this year";
@@ -1025,7 +1026,7 @@ function ABAPlanner({wide}) {
           <div>
             <div style={{fontSize:14,fontWeight:700,color:"#f59e0b",marginBottom:3}}>OOP Max Resets Every January 1</div>
             <div style={{fontSize:13,color:MUTED,lineHeight:1.6}}>
-              The $7,000 individual OOP max is per insurance year. After Dec 31 the counter resets — copays start again from $0. Hit the cap before year-end and the remaining months are free.
+              The {fmt(abaSettings.oopCap)} individual OOP max is per insurance year. After Dec 31 the counter resets — copays start again from $0. Hit the cap before year-end and the remaining months are free.
             </div>
           </div>
         </div>
@@ -1034,7 +1035,7 @@ function ABAPlanner({wide}) {
       {/* Schedule picker */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
         {ABA_OPTIONS.map((o,i)=>{
-          const {annualCost:ac,capHit:ch,fullMonthCost:fmc} = buildABASchedule(o.daysPerWeek);
+          const {annualCost:ac,capHit:ch,fullMonthCost:fmc} = buildABASchedule(o.daysPerWeek, abaSettings);
           const avgMonthly = ac / 12;
           return (
             <button key={i} onClick={()=>setSel(i)} style={{
@@ -1047,7 +1048,7 @@ function ABAPlanner({wide}) {
               <div style={{fontSize:wide?26:22,fontWeight:900,color:TEXT,letterSpacing:"-0.5px",fontVariantNumeric:"tabular-nums"}}>{fmt(avgMonthly)}</div>
               <div style={{fontSize:11,color:MUTED,marginTop:3}}>avg/month</div>
               <div style={{fontSize:11,color:"#64748b",marginTop:2}}>({fmt(fmc)}/mo full rate)</div>
-              <div style={{fontSize:11,color:ch?"#f59e0b":"#64748b",marginTop:3}}>{ch?"Cap hits ":"No cap — "}{ch?buildABASchedule(o.daysPerWeek).schedule.find(m=>m.status!=="full")?.month+" each yr":"pays all year"}</div>
+              <div style={{fontSize:11,color:ch?"#f59e0b":"#64748b",marginTop:3}}>{ch?"Cap hits ":"No cap — "}{ch?buildABASchedule(o.daysPerWeek, abaSettings).schedule.find(m=>m.status!=="full")?.month+" each yr":"pays all year"}</div>
               <div style={{fontSize:11,color:ch?"#94a3b8":"#22c55e",marginTop:2,fontWeight:700}}>{fmt(ac)}/yr</div>
             </button>
           );
@@ -1073,12 +1074,12 @@ function ABAPlanner({wide}) {
           </div>
           {capHit ? (
             <div style={{marginTop:12,padding:"10px 14px",background:"#f59e0b12",borderRadius:10,border:"1px solid #f59e0b33"}}>
-              <span style={{fontSize:13,color:"#f59e0b",fontWeight:600}}>⚡ Hits $7k OOP cap · {freeMonths2026.join(" & ")} are free each year</span>
+              <span style={{fontSize:13,color:"#f59e0b",fontWeight:600}}>⚡ Hits {fmt(abaSettings.oopCap)} OOP cap · {freeMonths2026.join(" & ")} are free each year</span>
             </div>
           ) : (
             <div style={{marginTop:12,padding:"10px 14px",background:"#ef444412",borderRadius:10,border:"1px solid #ef444433"}}>
               <span style={{fontSize:13,color:"#ef4444",fontWeight:600}}>
-                ⚠️ Never hits OOP cap — annual cost {fmt(annualCost)} vs {fmt(7000)} for 5-day ({fmt(annualCost-7000)} MORE/yr)
+                ⚠️ Never hits OOP cap — annual cost {fmt(annualCost)} vs {fmt(abaSettings.oopCap)} cap ({fmt(Math.abs(abaSettings.oopCap-annualCost))} {annualCost < abaSettings.oopCap ? "under cap/yr" : "over cap/yr"})
               </span>
             </div>
           )}
@@ -1612,8 +1613,8 @@ function Categories({wide, isMobile}) {
 
 // Stable CatSelect — defined outside TxnTable so it doesn't remount every render
 function CatSelect({ t, src, updateTxnCat }) {
-  const { allCats } = useBudget();
-  const color = CAT_COLORS[t.cat] || MUTED;
+  const { allCats, catColorsAll } = useBudget();
+  const color = catColorsAll[t.cat] || MUTED;
   return (
     <div style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
       <select
@@ -1806,7 +1807,7 @@ IMPORTANT: The amounts MUST sum to exactly ${txn.amount.toFixed(2)}. Group small
 
 // ── TRANSACTION TABLE ─────────────────────────────────────────────────────────
 function TxnTable({ src, isMobile }) {
-  const { checkTxns, ccTxns, updateTxnCat, deleteTxn, replaceTxn, selectedMonth, availableMonths, addTxns, allCats } = useBudget();
+  const { checkTxns, ccTxns, updateTxnCat, deleteTxn, replaceTxn, selectedMonth, availableMonths, addTxns, allCats, catColorsAll } = useBudget();
   const [splitTxn, setSplitTxn] = useState(null); // txn being split
   const allTxns = src === "checking" ? checkTxns : ccTxns;
 
@@ -1839,7 +1840,8 @@ function TxnTable({ src, isMobile }) {
   const submitManual = () => {
     const amount = parseFloat(newAmt);
     if (!newDesc.trim() || isNaN(amount)) return;
-    const date = newDate.trim() || "01/01";
+    const dateParts = newDate ? newDate.split("-") : null;
+    const date = dateParts && dateParts.length === 3 ? `${dateParts[1]}/${dateParts[2]}` : "01/01";
     addTxns(src, [{ date, desc: newDesc.trim(), amount, cat: newCat, month: newMon, note: "" }]);
     setNewDesc(""); setNewAmt(""); setNewDate("");
     setShowAdd(false);
@@ -1869,10 +1871,10 @@ function TxnTable({ src, isMobile }) {
                 {MONTHS.map(m=><option key={m}>{m}</option>)}
               </select>
             </div>
-            <div style={{display:"flex",flexDirection:"column",gap:4,flex:"0 0 80px"}}>
-              <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Date (MM/DD)</span>
-              <input value={newDate} onChange={e=>setNewDate(e.target.value)} placeholder="01/15"
-                style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+            <div style={{display:"flex",flexDirection:"column",gap:4,flex:"0 0 140px"}}>
+              <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Date</span>
+              <input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)}
+                style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%",colorScheme:"dark"}}/>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:4,flex:"1 1 160px"}}>
               <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Description</span>
@@ -1944,7 +1946,7 @@ function TxnTable({ src, isMobile }) {
               const isTransfer = t.cat==="Transfer";
               const isReturn   = t.amount<0;
               const isOneTime  = t.note?.includes("ONE-TIME");
-              const catColor   = CAT_COLORS[t.cat]||MUTED;
+              const catColor   = catColorsAll[t.cat]||MUTED;
               const amtColor   = isIncome?"#22c55e":isReturn?"#22c55e":isTransfer?MUTED:TEXT;
 
               return (
@@ -2002,7 +2004,7 @@ function TxnTable({ src, isMobile }) {
             {filtered.map((t,i)=>{
               const isIncome=t.cat==="Income", isTransfer=t.cat==="Transfer", isReturn=t.amount<0;
               const isOneTime=t.note?.includes("ONE-TIME");
-              const catColor=CAT_COLORS[t.cat]||MUTED;
+              const catColor=catColorsAll[t.cat]||MUTED;
               return (
                 <div key={i} style={{display:"grid",gridTemplateColumns:"60px 1fr 90px 120px 54px 36px",padding:"10px 16px",borderBottom:`1px solid ${BORDER}`,background:isIncome?"#22c55e07":isTransfer?"#33415507":i%2===0?SURFACE:BG,opacity:isTransfer?.5:1}}>
                   <div style={{fontSize:12,color:MUTED,alignSelf:"center"}}>{t.date}</div>
@@ -2349,7 +2351,7 @@ const TITHE_RATE   = 0.10;
 const ALL_MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 function TitheTracker({ wide, isMobile }) {
-  const { takeHome, t2CarryIn, setT2CarryIn, checkTxns, ccTxns, availableMonths } = useBudget();
+  const { takeHome, t2CarryIn, setT2CarryIn, checkTxns, ccTxns, availableMonths, titheSettings } = useBudget();
   const MONTHLY_TH = takeHome * TITHE_RATE;
   const carry = t2CarryIn;
   const setCarry = setT2CarryIn;
@@ -2360,24 +2362,31 @@ function TitheTracker({ wide, isMobile }) {
 
   // 1st Tithe: Giving & Tithe category spending per month (church transfers + Hillcrest etc)
   const T1_ACTUAL = useMemo(() => {
+    const t1Keys = titheSettings.t1Keywords.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
     return availableMonths.map(month => {
       const paid = [...checkTxns, ...ccTxns]
-        .filter(t => t.month === month && t.cat === "Giving & Tithe")
+        .filter(t => {
+          if (t.month !== month || t.cat !== "Giving & Tithe") return false;
+          if (t1Keys.length === 0) return true;
+          const desc = t.desc.toLowerCase();
+          return t1Keys.some(k => desc.includes(k));
+        })
         .reduce((s, t) => s + t.amount, 0);
       return { month: SHORT[ORDER.indexOf(month)], paid, notes: "" };
     });
-  }, [checkTxns, ccTxns, availableMonths]);
+  }, [checkTxns, ccTxns, availableMonths, titheSettings.t1Keywords]);
 
-  // 2nd Tithe: transfers to savings (XXXX8500) — tagged as "Giving & Tithe" with "2nd Tithe" or "XXXX8500" in desc
+  // 2nd Tithe: transfers to savings — matched by configurable keywords in desc
   const T2_ACTUAL = useMemo(() => {
+    const t2Keys = titheSettings.t2Keywords.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
     return availableMonths.map(month => {
       const saved = checkTxns
         .filter(t => t.month === month && t.cat === "Giving & Tithe" &&
-          (t.desc.toLowerCase().includes("8500") || t.desc.toLowerCase().includes("2nd tithe") || t.desc.toLowerCase().includes("feast")))
+          t2Keys.some(k => t.desc.toLowerCase().includes(k)))
         .reduce((s, t) => s + t.amount, 0);
       return { month: SHORT[ORDER.indexOf(month)], saved, notes: "" };
     });
-  }, [checkTxns, availableMonths]);
+  }, [checkTxns, availableMonths, titheSettings.t2Keywords]);
 
   const currentMonth = availableMonths.length;
 
@@ -2390,13 +2399,13 @@ function TitheTracker({ wide, isMobile }) {
   // Feast is October (month index 9). Save Jan–Sep (9 months), spend Oct, save Oct–Dec.
   // Simplified: show projected balance at Oct 1 based on current trend.
   const t2YTDSaved   = T2_ACTUAL.reduce((s, m) => s + m.saved, 0);
-  const monthsToFeast = 9 - currentMonth; // months remaining before October
+  const monthsToFeast = titheSettings.feastMonth - currentMonth; // months remaining before feast
   const t2Projected  = carry + t2YTDSaved + (monthsToFeast * MONTHLY_TH); // if on track
   const t2CurrentBal = carry + t2YTDSaved;
 
   // Build the full-year savings arc for the bar chart
   // Jan–Sep: accumulate. Oct: spend all. Nov–Dec: start fresh.
-  const FEAST_MONTH = 9; // October = index 9
+  const FEAST_MONTH = titheSettings.feastMonth;
   const t2Chart = ALL_MONTHS.map((m, i) => {
     let balance = 0;
     if (i < FEAST_MONTH) {
@@ -2438,7 +2447,7 @@ function TitheTracker({ wide, isMobile }) {
       <Card glow="#7c6af7">
         <Label>Tithe Tracker · 2026</Label>
         <div style={{fontSize:13, color:MUTED, lineHeight:1.7, marginBottom:12}}>
-          1st Tithe = 10% to church monthly · 2nd Tithe = 10% saved for 1st of October feast, then spent and restarted.
+          1st Tithe = 10% to church monthly · 2nd Tithe = 10% saved for the {["January","February","March","April","May","June","July","August","September","October","November","December"][titheSettings.feastMonth]} feast, then spent and restarted.
           Take-home is {fmt(takeHome)}/mo so each tithe is <strong style={{color:ACCENT}}>{fmt(MONTHLY_TH)}/mo</strong>.
         </div>
         <div style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
@@ -2652,7 +2661,7 @@ Return ONLY the JSON array. Example format:
 
 // ── TRENDS ────────────────────────────────────────────────────────────────────
 function Trends({ wide, isMobile }) {
-  const { checkTxns, ccTxns, availableMonths, selectedMonth, setSelectedMonth } = useBudget();
+  const { checkTxns, ccTxns, availableMonths, selectedMonth, setSelectedMonth, summaryRows, catColorsAll } = useBudget();
   const [focusCat, setFocusCat] = useState(null);
 
   const MONTH_ORDER = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -2661,17 +2670,17 @@ function Trends({ wide, isMobile }) {
   const trendData = useMemo(() => {
     return availableMonths.map(m => {
       const row = { month: m.slice(0,3) };
-      SUMMARY_ROWS.forEach(r => {
+      summaryRows.forEach(r => {
         const c = [...checkTxns, ...ccTxns]
           .filter(t => t.month === m && t.cat === r.cat && t.cat !== "Transfer" && t.cat !== "Income")
           .reduce((s,t) => s + t.amount, 0);
         row[r.cat] = Math.round(c);
       });
-      row._total = SUMMARY_ROWS.reduce((s,r) => s + (row[r.cat]||0), 0);
+      row._total = summaryRows.reduce((s,r) => s + (row[r.cat]||0), 0);
       row._income = checkTxns.filter(t => t.month===m && t.cat==="Income").reduce((s,t)=>s+t.amount,0);
       return row;
     });
-  }, [checkTxns, ccTxns, availableMonths]);
+  }, [checkTxns, ccTxns, availableMonths, summaryRows]);
 
   // Month-over-month delta for selected cat
   const deltaData = focusCat && trendData.length >= 2
@@ -2741,16 +2750,16 @@ function Trends({ wide, isMobile }) {
                 <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
                 <YAxis hide/>
                 <Tooltip formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:11,maxHeight:300,overflowY:"auto"}}/>
-                {SUMMARY_ROWS.filter(r => !focusCat || r.cat === focusCat).map(r => (
+                {summaryRows.filter(r => !focusCat || r.cat === focusCat).map((r, ri, arr) => (
                   <Bar key={r.cat} dataKey={r.cat} stackId="a" fill={r.color}
                     opacity={focusCat && focusCat !== r.cat ? 0.15 : 1}
-                    radius={r.cat === SUMMARY_ROWS[SUMMARY_ROWS.length-1].cat ? [4,4,0,0] : [0,0,0,0]}/>
+                    radius={ri === arr.length-1 ? [4,4,0,0] : [0,0,0,0]}/>
                 ))}
               </BarChart>
             </ResponsiveContainer>
             {/* Category legend — click to focus */}
             <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:12}}>
-              {SUMMARY_ROWS.map(r=>(
+              {summaryRows.map(r=>(
                 <button key={r.cat} onClick={()=>setFocusCat(focusCat===r.cat?null:r.cat)} style={{
                   display:"flex",alignItems:"center",gap:5,padding:"3px 8px",borderRadius:99,cursor:"pointer",
                   background:focusCat===r.cat?r.color+"33":BG,
@@ -2801,7 +2810,7 @@ function Trends({ wide, isMobile }) {
                 <div key={m} style={{fontSize:10,fontWeight:700,color:m===selectedMonth?ACCENT:MUTED,textTransform:"uppercase",letterSpacing:".5px",textAlign:"right"}}>{m.slice(0,3)}</div>
               ))}
             </div>
-            {SUMMARY_ROWS.map((r,i)=>(
+            {summaryRows.map((r,i)=>(
               <div key={r.cat} style={{display:"grid",gridTemplateColumns:`180px repeat(${availableMonths.length},1fr)`,padding:"9px 16px",borderBottom:`1px solid ${BORDER}`,background:i%2===0?SURFACE:BG,alignItems:"center"}}>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <div style={{width:8,height:8,borderRadius:2,background:r.color,flexShrink:0}}/>
@@ -2836,7 +2845,7 @@ function Trends({ wide, isMobile }) {
         <Card>
           <Label>January 2026 · Category Summary</Label>
           <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
-            {SUMMARY_ROWS.map(r=>{
+            {summaryRows.map(r=>{
               const val = [...checkTxns,...ccTxns].filter(t=>t.month==="January"&&t.cat===r.cat&&t.cat!=="Transfer"&&t.cat!=="Income").reduce((s,t)=>s+t.amount,0);
               if(!val) return null;
               return (
@@ -2858,17 +2867,23 @@ function Trends({ wide, isMobile }) {
 // ── SETTINGS ────────────────────────────────────────────────────────────────
 function NewCatInput({ onAdd, allCats }) {
   const [val, setVal] = useState("");
+  const [icon, setIcon] = useState("📁");
+  const [color, setColor] = useState("#94a3b8");
   const submit = () => {
     const name = val.trim();
     if (!name || allCats.map(c=>c.toLowerCase()).includes(name.toLowerCase())) return;
-    onAdd(name);
-    setVal("");
+    onAdd({ name, icon: icon || "📁", color: color || "#94a3b8" });
+    setVal(""); setIcon("📁"); setColor("#94a3b8");
   };
   return (
-    <div style={{display:"flex",gap:8}}>
+    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+      <input value={icon} onChange={e=>setIcon(e.target.value)} placeholder="📁"
+        style={{width:40,background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"6px 4px",color:TEXT,fontSize:18,outline:"none",textAlign:"center"}}/>
+      <input type="color" value={color} onChange={e=>setColor(e.target.value)}
+        style={{width:40,height:36,background:"transparent",border:`1px solid ${BORDER}`,borderRadius:8,cursor:"pointer",padding:2,flexShrink:0}}/>
       <input value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}
         placeholder="New category name…"
-        style={{flex:1,background:BG,border:`1px solid #06b6d4`,borderRadius:8,padding:"7px 12px",color:TEXT,fontSize:13,outline:"none"}}/>
+        style={{flex:1,minWidth:120,background:BG,border:`1px solid #06b6d4`,borderRadius:8,padding:"7px 12px",color:TEXT,fontSize:13,outline:"none"}}/>
       <button onClick={submit}
         style={{padding:"7px 16px",borderRadius:8,background:"#06b6d4",color:"#0d1117",fontWeight:800,fontSize:13,border:"none",cursor:"pointer"}}>
         + Add
@@ -2892,6 +2907,8 @@ function Settings({ isMobile }) {
     showTithe, setShowTithe,
     showABA,   setShowABA,
     customCats, setCustomCats, allCats,
+    abaSettings, setAbaSettings,
+    titheSettings, setTitheSettings,
   } = useBudget();
 
   const [thInput, setThInput]     = useState(takeHome || "");
@@ -3010,20 +3027,73 @@ function Settings({ isMobile }) {
       {/* Custom Categories */}
       <Card glow="#06b6d4" style={{marginTop:16}}>
         <Label>🏷️ Custom Categories</Label>
-        <div style={{fontSize:12,color:MUTED,marginBottom:12}}>Add your own spending categories. They'll appear everywhere categories are listed.</div>
+        <div style={{fontSize:12,color:MUTED,marginBottom:12}}>Add categories with a custom icon and color. They appear everywhere categories are listed.</div>
         {customCats.length > 0 && (
           <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
             {customCats.map((c,i) => (
-              <div key={c} style={{display:"flex",alignItems:"center",gap:5,background:"#06b6d411",border:"1px solid #06b6d433",borderRadius:99,padding:"3px 10px"}}>
-                <span style={{fontSize:12,color:"#06b6d4",fontWeight:600}}>{c}</span>
+              <div key={c.name} style={{display:"flex",alignItems:"center",gap:5,background:c.color+"22",border:`1px solid ${c.color}44`,borderRadius:99,padding:"3px 10px"}}>
+                <span style={{fontSize:14}}>{c.icon}</span>
+                <span style={{fontSize:12,color:c.color,fontWeight:600}}>{c.name}</span>
                 <button onClick={() => setCustomCats(prev => prev.filter((_,j) => j !== i))}
-                  style={{background:"none",border:"none",color:"#06b6d4",fontSize:12,cursor:"pointer",padding:0,lineHeight:1,opacity:.7}}>✕</button>
+                  style={{background:"none",border:"none",color:c.color,fontSize:12,cursor:"pointer",padding:0,lineHeight:1,opacity:.7}}>✕</button>
               </div>
             ))}
           </div>
         )}
-        <NewCatInput onAdd={name => setCustomCats(prev => prev.includes(name) ? prev : [...prev, name])} allCats={allCats} />
+        <NewCatInput onAdd={nc => setCustomCats(prev => prev.some(c => c.name === nc.name) ? prev : [...prev, nc])} allCats={allCats} />
       </Card>
+
+      {/* ABA Settings — visible only when ABA feature is enabled */}
+      {showABA && (
+      <Card glow="#8b5cf6" style={{marginTop:16}}>
+        <Label>🧩 ABA Therapy Settings</Label>
+        <div style={{fontSize:12,color:MUTED,marginBottom:14}}>Customize cost calculations used in the ABA Planner tab.</div>
+        {[
+          { key:"costPerVisit", label:"Cost per visit ($)", min:1,   step:5   },
+          { key:"oopCap",       label:"Annual out-of-pocket cap ($)", min:100, step:100 },
+        ].map(f => (
+          <div key={f.key} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <span style={{fontSize:13,color:TEXT,flex:1}}>{f.label}</span>
+            <input type="number" value={abaSettings[f.key]} min={f.min} step={f.step}
+              onChange={e => setAbaSettings(prev => ({ ...prev, [f.key]: parseFloat(e.target.value) || prev[f.key] }))}
+              style={{width:100,background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"5px 8px",color:TEXT,fontSize:13,outline:"none"}}/>
+          </div>
+        ))}
+      </Card>
+      )}
+
+      {/* Tithe Settings — visible only when Tithe feature is enabled */}
+      {showTithe && (
+      <Card glow="#7c6af7" style={{marginTop:16}}>
+        <Label>⛪ Tithe Settings</Label>
+        <div style={{fontSize:12,color:MUTED,marginBottom:14}}>Configure which transactions count as 1st / 2nd Tithe and set the feast month.</div>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <div>
+            <div style={{fontSize:12,color:MUTED,marginBottom:6}}>1st Tithe — filter keywords (comma-separated · blank = all Giving &amp; Tithe)</div>
+            <input value={titheSettings.t1Keywords}
+              onChange={e => setTitheSettings(prev => ({ ...prev, t1Keywords: e.target.value }))}
+              placeholder="e.g. hillcrest,church — leave blank to include all"
+              style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none"}}/>
+          </div>
+          <div>
+            <div style={{fontSize:12,color:MUTED,marginBottom:6}}>2nd Tithe — filter keywords (comma-separated · matched against transaction description)</div>
+            <input value={titheSettings.t2Keywords}
+              onChange={e => setTitheSettings(prev => ({ ...prev, t2Keywords: e.target.value }))}
+              placeholder="e.g. 8500,2nd tithe,feast"
+              style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none"}}/>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:13,color:TEXT,flex:1}}>Feast month</span>
+            <input type="number" min={1} max={12} value={titheSettings.feastMonth + 1}
+              onChange={e => setTitheSettings(prev => ({ ...prev, feastMonth: Math.max(0, Math.min(11, parseInt(e.target.value,10) - 1)) || 0 }))}
+              style={{width:60,background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"5px 8px",color:TEXT,fontSize:13,outline:"none"}}/>
+            <span style={{fontSize:12,color:MUTED}}>
+              {["January","February","March","April","May","June","July","August","September","October","November","December"][titheSettings.feastMonth]}
+            </span>
+          </div>
+        </div>
+      </Card>
+      )}
 
       {/* Waterfall Visibility */}
       <Card glow="#f97316" style={{marginTop:16}}>
@@ -3230,7 +3300,7 @@ function Settings({ isMobile }) {
 
 
 function StatementImporter({ wide, isMobile }) {
-  const { addTxns, checkTxns, ccTxns, allCats } = useBudget();
+  const { addTxns, checkTxns, ccTxns, allCats, catColorsAll } = useBudget();
 
   // Steps: "upload" → "parsing" → "review" → "done"
   const [step, setStep]         = useState("upload");
@@ -3245,6 +3315,8 @@ function StatementImporter({ wide, isMobile }) {
   const [parsed, setParsed]     = useState([]); // raw from Claude
   const [reviewed, setReviewed] = useState([]); // user-edited
   const [editingIdx, setEditingIdx] = useState(null);
+  const [aiRanOnCsv, setAiRanOnCsv] = useState(false);
+  const [runningAI, setRunningAI] = useState(false);
 
   // ── CSV parser (client-side, no AI needed) ──────────────────────────────────
   const splitCSVLine = (line, delim) => {
@@ -3501,9 +3573,69 @@ Do NOT include a "cat" field.`;
     setStep("done");
   };
 
+  // ── Run AI categorization on CSV review (categorizes unmatched transactions) ─
+  const runAICategorization = async () => {
+    const apiKey = (() => { try { return localStorage.getItem("budget_apikey") || ""; } catch { return ""; } })();
+    if (!apiKey) { setParseError("Set your Anthropic API key in Settings first, then try again."); return; }
+    const unmatched = reviewed.reduce((acc, t, i) => {
+      if (!t._localMatch) acc.push({ i, desc: t.desc });
+      return acc;
+    }, []);
+    if (unmatched.length === 0) { setAiRanOnCsv(true); return; }
+    setRunningAI(true); setParseError(null);
+    try {
+      const merchantList = unmatched.map(x => x.i + ": " + x.desc).join("\n");
+      const catRules = [
+        "grocery stores, supermarkets, Costco, Walmart food -> Groceries",
+        "restaurants, fast food, cafes -> Dining Out",
+        "mortgage, utilities, electric, gas bill, water, internet, phone, home repair -> Housing",
+        "gas stations fuel, auto insurance, car payment -> Transportation",
+        "Amazon shopping, retail stores, online shopping non-grocery -> Shopping",
+        "Netflix, Hulu, Disney+, Spotify, YouTube, subscriptions -> Subscriptions",
+        "doctors, hospitals, pharmacy, therapy, medical -> Medical",
+        "ABA therapy, Success on Spectrum -> ABA Therapy",
+        "kids activities, school, children stores -> Kids & Family",
+        "loan payments, credit card payments -> Debt Service",
+        "church, tithe, giving -> Giving & Tithe",
+        "gas station snacks, misc small purchases -> Snacks/Misc",
+        "paycheck deposits -> Income",
+        "transfers between own accounts, CC payments -> Transfer",
+      ].join("\n");
+      const catPrompt = [
+        "Categorize each merchant into exactly one of: " + allCats.join(", "),
+        "", "Rules:", catRules, "",
+        "Merchants:", merchantList, "",
+        'Return ONLY a JSON object like: {"0":"Groceries","1":"Housing"}',
+      ].join("\n");
+      const catRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 800,
+          messages: [{ role: "user", content: catPrompt }]
+        })
+      });
+      const catData = await catRes.json();
+      if (catData.error) throw new Error(catData.error.message);
+      const aiCatMap = JSON.parse((catData.content?.find(b=>b.type==="text")?.text||"{}").replace(/```json|```/g,"").trim());
+      setReviewed(prev => prev.map((t, i) => {
+        const match = unmatched.find(x => x.i === i);
+        if (!match) return t;
+        const aiCat = aiCatMap[String(i)];
+        return aiCat ? { ...t, cat: aiCat } : t;
+      }));
+      const aiCount = Object.keys(aiCatMap).length;
+      setMatchStats(prev => ({ ...(prev||{}), ai: aiCount, local: prev?.local || 0, csv: false }));
+      setAiRanOnCsv(true);
+    } catch (e) {
+      setParseError("AI categorization failed: " + e.message);
+    }
+    setRunningAI(false);
+  };
+
   const reset = () => {
     setStep("upload"); setFileName(null); setFileType(null); setPdfB64(null); setCsvText(null);
     setParsed([]); setReviewed([]); setParseError(null); setEditingIdx(null);
+    setAiRanOnCsv(false); setRunningAI(false);
   };
 
   const includedCount = reviewed.filter(t => t._include).length;
@@ -3631,8 +3763,8 @@ Do NOT include a "cat" field.`;
                   {stmtSrc==="checking"?"🏦 Checking":"💳 Credit Card"} · {month} 2026 · Uncheck any you want to exclude
                 </div>
                 {matchStats && (
-                  <div style={{marginTop:6,display:"flex",gap:8,flexWrap:"wrap"}}>
-                    {matchStats.csv
+                  <div style={{marginTop:6,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                    {matchStats.csv && !aiRanOnCsv
                       ? <span style={{fontSize:11,padding:"2px 8px",borderRadius:99,background:"#06b6d422",color:"#06b6d4",border:"1px solid #06b6d444",fontWeight:700}}>
                           📊 CSV parsed client-side · no AI used
                         </span>
@@ -3644,6 +3776,14 @@ Do NOT include a "cat" field.`;
                       <span style={{fontSize:11,padding:"2px 8px",borderRadius:99,background:"#818cf822",color:"#818cf8",border:"1px solid #818cf844",fontWeight:700}}>
                         ✨ {matchStats.ai} categorized by AI
                       </span>
+                    )}
+                    {!aiRanOnCsv && (
+                      <button onClick={runAICategorization} disabled={runningAI}
+                        style={{fontSize:11,padding:"3px 10px",borderRadius:99,cursor:runningAI?"default":"pointer",fontWeight:700,
+                          background:runningAI?"#1e2535":"#8b5cf622",color:runningAI?MUTED:"#8b5cf6",
+                          border:`1px solid ${runningAI?"#1e2535":"#8b5cf644"}`,transition:"all .15s"}}>
+                        {runningAI ? "⏳ Running AI…" : "✨ Run AI Categorization"}
+                      </button>
                     )}
                   </div>
                 )}
@@ -3672,7 +3812,7 @@ Do NOT include a "cat" field.`;
             </div>
 
             {reviewed.map((t, idx) => {
-              const color = CAT_COLORS[t.cat] || MUTED;
+              const color = catColorsAll[t.cat] || MUTED;
               const isTransfer = t.cat==="Transfer"||t.cat==="Income";
               return (
                 <div key={idx} style={{
@@ -3853,9 +3993,23 @@ export default function BudgetDashboardClean() {
   const [dashName, setDashName] = useState(() => ls.get("budget_dashName") || "My Budget");
   const [showTithe, setShowTithe] = useState(() => ls.get("budget_showTithe") !== "0");
   const [showABA, setShowABA]   = useState(() => ls.get("budget_showABA")   !== "0");
-  const [customCats, setCustomCats] = useState(() => ls.getJSON("budget_customCats", []));
+  const [customCats, setCustomCats] = useState(() => {
+    const raw = ls.getJSON("budget_customCats", []);
+    return raw.map(c => typeof c === "string" ? { name: c, icon: "📁", color: "#94a3b8" } : c);
+  });
   useEffect(() => { ls.setJSON("budget_customCats", customCats); }, [customCats]);
-  const allCats = useMemo(() => [...VALID_CATS, ...customCats], [customCats]);
+  const allCats = useMemo(() => [...VALID_CATS, ...customCats.map(c => c.name)], [customCats]);
+  const catColorsAll = useMemo(() => {
+    const all = { ...CAT_COLORS };
+    customCats.forEach(c => { all[c.name] = c.color; });
+    return all;
+  }, [customCats]);
+
+  const [abaSettings, setAbaSettings] = useState(() => ls.getJSON("budget_abaSettings", { costPerVisit: 35, oopCap: 7000 }));
+  useEffect(() => { ls.setJSON("budget_abaSettings", abaSettings); }, [abaSettings]);
+
+  const [titheSettings, setTitheSettings] = useState(() => ls.getJSON("budget_titheSettings", { t1Keywords: "", t2Keywords: "8500,2nd tithe,feast", feastMonth: 9 }));
+  useEffect(() => { ls.setJSON("budget_titheSettings", titheSettings); }, [titheSettings]);
   useEffect(() => { ls.set("budget_dashName",  dashName); }, [dashName]);
   useEffect(() => { ls.set("budget_showTithe", showTithe ? "1" : "0"); }, [showTithe]);
   useEffect(() => { ls.set("budget_showABA",   showABA   ? "1" : "0"); }, [showABA]);
@@ -3918,24 +4072,39 @@ export default function BudgetDashboardClean() {
   }, []);
 
   // ── Derived summary rows — norm auto-computed from actual − one-times ──────
-  const summaryRows = useMemo(() => SUMMARY_ROWS
-    .filter(base => {
-      if (base.cat === "Giving & Tithe" && !showTithe) return false;
-      if (base.cat === "ABA Therapy"    && !showABA)   return false;
-      return true;
-    })
-    .map(base => {
+  const summaryRows = useMemo(() => {
+    const baseRows = SUMMARY_ROWS
+      .filter(base => {
+        if (base.cat === "Giving & Tithe" && !showTithe) return false;
+        if (base.cat === "ABA Therapy"    && !showABA)   return false;
+        return true;
+      })
+      .map(base => {
+        const checking = checkTxns
+          .filter(t => t.month === selectedMonth && t.cat === base.cat && t.cat !== "Transfer" && t.cat !== "Income")
+          .reduce((s, t) => s + t.amount, 0);
+        const cc = ccTxns
+          .filter(t => t.month === selectedMonth && t.cat === base.cat)
+          .reduce((s, t) => s + t.amount, 0);
+        const oneTimeAmt = oneTimes.filter(o => o.cat === base.cat).reduce((s, o) => s + o.amount, 0);
+        const norm = checking + cc - oneTimeAmt;
+        const kc = budgetKc[base.cat] !== undefined ? budgetKc[base.cat] : base.kc;
+        return { ...base, checking, cc, norm, kc };
+      });
+    const customRows = customCats.map(c => {
       const checking = checkTxns
-        .filter(t => t.month === selectedMonth && t.cat === base.cat && t.cat !== "Transfer" && t.cat !== "Income")
+        .filter(t => t.month === selectedMonth && t.cat === c.name && t.cat !== "Transfer" && t.cat !== "Income")
         .reduce((s, t) => s + t.amount, 0);
       const cc = ccTxns
-        .filter(t => t.month === selectedMonth && t.cat === base.cat)
+        .filter(t => t.month === selectedMonth && t.cat === c.name)
         .reduce((s, t) => s + t.amount, 0);
-      const oneTimeAmt = oneTimes.filter(o => o.cat === base.cat).reduce((s, o) => s + o.amount, 0);
+      const oneTimeAmt = oneTimes.filter(o => o.cat === c.name).reduce((s, o) => s + o.amount, 0);
       const norm = checking + cc - oneTimeAmt;
-      const kc = budgetKc[base.cat] !== undefined ? budgetKc[base.cat] : base.kc;
-      return { ...base, checking, cc, norm, kc };
-    }), [checkTxns, ccTxns, selectedMonth, oneTimes, budgetKc, showTithe, showABA]);
+      const kc = budgetKc[c.name] !== undefined ? budgetKc[c.name] : null;
+      return { cat: c.name, icon: c.icon, color: c.color, checking, cc, norm, kc, oneTime: oneTimeAmt, notes: "" };
+    });
+    return [...baseRows, ...customRows];
+  }, [checkTxns, ccTxns, selectedMonth, oneTimes, budgetKc, showTithe, showABA, customCats]);
 
   const janActual   = summaryRows.reduce((s, r) => s + r.checking + r.cc, 0);
   const normTotal   = summaryRows.reduce((s, r) => s + r.norm, 0);
@@ -3955,7 +4124,9 @@ export default function BudgetDashboardClean() {
     dashName, setDashName,
     showTithe, setShowTithe,
     showABA,   setShowABA,
-    customCats, setCustomCats, allCats,
+    customCats, setCustomCats, allCats, catColorsAll,
+    abaSettings, setAbaSettings,
+    titheSettings, setTitheSettings,
   };
 
   const pages = {
