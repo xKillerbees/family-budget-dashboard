@@ -107,10 +107,10 @@ const ABA_OPTIONS = [
 ];
 
 const PAYOFFS_INIT = [
-  { id:"p1", name:"Car Loan",     payment:460.00,  balance:2280,   origBalance:2280,   balanceStr:"$2,280",  date:"Jul 2026",  months:"5 left",  pct:95, color:"#22c55e", keywords:"" },
-  { id:"p2", name:"Credit Card",  payment:151.22,  balance:1586,   origBalance:1586,   balanceStr:"$1,586",  date:"Jan 2027",  months:"11 left", pct:65, color:"#a78bfa", keywords:"" },
-  { id:"p3", name:"Auto Loan",    payment:507.03,  balance:17670,  origBalance:17670,  balanceStr:"$17,670", date:"Mar 2029",  months:"37 left", pct:30, color:"#64748b", keywords:"" },
-  { id:"p4", name:"Student Loan", payment:201.09,  balance:25000,  origBalance:25000,  balanceStr:"$25,000", date:"Long-term", months:"TBD",     pct:5,  color:"#475569", keywords:"" },
+  { id:"p1", name:"Car Loan",     payment:460.00,  balance:2280,   origBalance:2280,   manualBalance:0, icon:"🚗", balanceStr:"$2,280",  date:"Jul 2026",  months:"5 left",  pct:95, color:"#22c55e", keywords:"" },
+  { id:"p2", name:"Credit Card",  payment:151.22,  balance:1586,   origBalance:1586,   manualBalance:0, icon:"💳", balanceStr:"$1,586",  date:"Jan 2027",  months:"11 left", pct:65, color:"#a78bfa", keywords:"" },
+  { id:"p3", name:"Auto Loan",    payment:507.03,  balance:17670,  origBalance:17670,  manualBalance:0, icon:"🚙", balanceStr:"$17,670", date:"Mar 2029",  months:"37 left", pct:30, color:"#64748b", keywords:"" },
+  { id:"p4", name:"Student Loan", payment:201.09,  balance:25000,  origBalance:25000,  manualBalance:0, icon:"🎓", balanceStr:"$25,000", date:"Long-term", months:"TBD",     pct:5,  color:"#475569", keywords:"" },
 ];
 
 const CAT_COLORS = {
@@ -1118,6 +1118,15 @@ function ABAPlanner({wide}) {
 // ── PAYOFFS ───────────────────────────────────────────────────────────────────
 const PAYOFF_COLORS = ["#22c55e","#a78bfa","#64748b","#475569","#f59e0b","#ef4444","#06b6d4","#ec4899","#3b82f6","#10b981"];
 
+// Defined at module level so React doesn't remount it on every parent re-render
+const FieldInput = ({label, val, onChange, type="text", placeholder=""}) => (
+  <div>
+    <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>{label}</div>
+    <input type={type} value={val} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
+      style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none"}}/>
+  </div>
+);
+
 function Payoffs({wide}) {
   const { payoffs, setPayoffs, normSurplus, groceryGoal, checkTxns, ccTxns, selectedMonth, takeHome } = useBudget();
   const [enabled, setEnabled] = useState(() => {
@@ -1131,7 +1140,7 @@ function Payoffs({wide}) {
   const [editId,    setEditId]   = useState(null);
   const [editDraft, setEditDraft] = useState({});
   const [adding,  setAdding]    = useState(false);
-  const [newDebt, setNewDebt]   = useState({ name:"", payment:"", balance:"", date:"", months:"", pct:50, color:"#22c55e", keywords:"" });
+  const [newDebt, setNewDebt]   = useState({ name:"", payment:"", balance:"", manualBalance:"", icon:"💳", color:"#22c55e", keywords:"" });
 
   const toggle = id => setEnabled(prev => { const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; });
 
@@ -1152,18 +1161,17 @@ function Payoffs({wide}) {
       id,
       name:        newDebt.name,
       payment:     parseFloat(newDebt.payment)||0,
-      balance:     origBal,
-      origBalance: origBal,
-      balanceStr:  newDebt.balance || "$0",
-      date:        newDebt.date || "TBD",
-      months:      newDebt.months || "TBD",
-      pct:         parseInt(newDebt.pct)||0,
-      color:       newDebt.color,
-      keywords:    newDebt.keywords || "",
+      balance:       origBal,
+      origBalance:   origBal,
+      manualBalance: parseFloat(newDebt.manualBalance) || 0,
+      icon:          newDebt.icon || "💳",
+      balanceStr:    newDebt.balance || "$0",
+      color:         newDebt.color,
+      keywords:      newDebt.keywords || "",
     };
     setPayoffs(prev => [...prev, p]);
     setEnabled(prev => new Set([...prev, id]));
-    setNewDebt({ name:"", payment:"", balance:"", date:"", months:"", pct:50, color:"#22c55e", keywords:"" });
+    setNewDebt({ name:"", payment:"", balance:"", manualBalance:"", icon:"💳", color:"#22c55e", keywords:"" });
     setAdding(false);
   };
 
@@ -1171,26 +1179,24 @@ function Payoffs({wide}) {
 
   // Compute live balance, progress, and time-to-payoff for a debt
   const getPayoffStats = (p) => {
-    const orig = p.origBalance || p.balance || 0;
-    const pmt  = parseFloat(p.payment) || 0;
-    const kws  = (p.keywords || "").split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
-    const mkDate = (mo) => {
+    const orig    = p.origBalance || p.balance || 0;
+    const pmt     = parseFloat(p.payment) || 0;
+    const manual  = parseFloat(p.manualBalance) || 0;
+    const kws     = (p.keywords || "").split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
+    const mkDate  = (mo) => {
       if (mo === null) return "TBD";
       if (mo <= 0) return "Paid off!";
       const d = new Date(); d.setMonth(d.getMonth() + mo);
       return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()] + " " + d.getFullYear();
     };
-    if (!kws.length || orig === 0) {
-      const monthsLeft = (pmt > 0 && orig > 0) ? Math.ceil(orig / pmt) : null;
-      return { currentBalance: orig, pct: 0, paid: 0, auto: false, monthsLeft, payoffDate: mkDate(monthsLeft) };
-    }
-    const paid = allTxns
-      .filter(t => kws.some(kw => (t.desc || "").toLowerCase().includes(kw)))
-      .reduce((s, t) => s + (t.amount > 0 ? t.amount : 0), 0);
-    const currentBalance = Math.max(0, orig - paid);
-    const pct = orig > 0 ? Math.min(100, Math.round((paid / orig) * 100)) : 0;
+    const matchedTxns = kws.length ? allTxns.filter(t => kws.some(kw => (t.desc || "").toLowerCase().includes(kw))) : [];
+    const paid = matchedTxns.reduce((s, t) => s + (t.amount > 0 ? t.amount : 0), 0);
+    // Priority: manual override > keyword-computed > origBalance
+    const currentBalance = manual > 0 ? manual : (kws.length && orig > 0 ? Math.max(0, orig - paid) : orig);
+    const auto = !manual && kws.length > 0 && orig > 0;
+    const pct  = orig > 0 ? Math.min(100, Math.round(((orig - currentBalance) / orig) * 100)) : 0;
     const monthsLeft = (pmt > 0 && currentBalance > 0) ? Math.ceil(currentBalance / pmt) : (currentBalance <= 0 ? 0 : null);
-    return { currentBalance, pct, paid, auto: true, monthsLeft, payoffDate: mkDate(monthsLeft) };
+    return { currentBalance, pct, paid, auto, monthsLeft, payoffDate: mkDate(monthsLeft), matchedTxns };
   };
 
   const totalRelief  = payoffs.filter(p=>enabled.has(p.id)).reduce((s,p)=>s+p.payment,0);
@@ -1200,13 +1206,7 @@ function Payoffs({wide}) {
   const projColor    = projSurplus>=0?"#22c55e":projSurplus>-500?"#f59e0b":"#ef4444";
   const barData      = payoffs.map(p=>({name:p.name, payment:p.payment, active:enabled.has(p.id), color:p.color}));
 
-  const FieldInput = ({label, val, onChange, type="text", placeholder=""}) => (
-    <div>
-      <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>{label}</div>
-      <input type={type} value={val} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
-        style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none"}}/>
-    </div>
-  );
+  // FieldInput is at module level
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -1266,8 +1266,12 @@ function Payoffs({wide}) {
               {/* Header row */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:isEdit?14:12}}>
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{width:36,height:36,borderRadius:10,background:p.color+"22",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <span style={{fontSize:15,fontWeight:900,color:p.color}}>💳</span>
+                  <div style={{width:36,height:36,borderRadius:10,background:p.color+"22",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,position:"relative"}}>
+                    {isEdit
+                      ? <EmojiInput value={editDraft.icon || "💳"} onChange={v=>setEditDraft(d=>({...d,icon:v}))}
+                          inputStyle={{width:36,height:36,background:"none",border:"none",fontSize:20,outline:"none",textAlign:"center",cursor:"pointer",borderRadius:10}}/>
+                      : <span style={{fontSize:20}}>{p.icon || "💳"}</span>
+                    }
                   </div>
                   {isEdit
                     ? <input value={editDraft.name || ""} onChange={e=>setEditDraft(d=>({...d,name:e.target.value}))}
@@ -1310,10 +1314,20 @@ function Payoffs({wide}) {
                     onChange={v=>setEditDraft(d=>({...d,payment:parseFloat(v)||0}))} type="number" placeholder="460"/>
                   <FieldInput label="Orig. Balance $" val={editDraft.origBalance ?? editDraft.balance ?? ""}
                     onChange={v=>{const n=parseFloat(v)||0; setEditDraft(d=>({...d,origBalance:n,balance:n}));}} type="number" placeholder="12000"/>
+                  <FieldInput label="Current Balance $ (override)" val={editDraft.manualBalance || ""}
+                    onChange={v=>setEditDraft(d=>({...d,manualBalance:parseFloat(v)||0}))} type="number" placeholder="Leave blank for auto"/>
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px"}}>Icon</div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <EmojiInput value={editDraft.icon || "💳"} onChange={v=>setEditDraft(d=>({...d,icon:v}))}
+                        inputStyle={{width:44,background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"5px 4px",color:TEXT,fontSize:20,outline:"none",textAlign:"center",cursor:"pointer"}}/>
+                      <span style={{fontSize:10,color:MUTED}}>Click to pick · or press <kbd style={{background:"#1e2535",border:`1px solid ${BORDER}`,borderRadius:4,padding:"1px 5px",fontSize:10,fontFamily:"monospace"}}>Win + .</kbd></span>
+                    </div>
+                  </div>
                   <div style={{gridColumn:"1/-1"}}>
                     <FieldInput label="Filter Keywords (comma-separated)" val={editDraft.keywords || ""}
                       onChange={v=>setEditDraft(d=>({...d,keywords:v}))} placeholder="car loan, capital one, auto pay"/>
-                    <div style={{fontSize:10,color:MUTED,marginTop:4}}>Transactions whose description matches any keyword count as payments. Leave blank if no auto-tracking needed.</div>
+                    <div style={{fontSize:10,color:MUTED,marginTop:4}}>Transactions whose description matches any keyword count as payments. Overridden by manual current balance if set.</div>
                   </div>
                   {/* Computed preview — updates live as draft fields change, chart updates on Done */}
                   {(() => {
@@ -1343,6 +1357,21 @@ function Payoffs({wide}) {
                             <div style={{fontSize:14,fontWeight:700,color:col}}>{s.pct}%</div>
                           </div>
                         </div>
+                        {s.matchedTxns.length > 0 && (
+                          <div style={{marginTop:10,borderTop:`1px solid ${BORDER}`,paddingTop:8}}>
+                            <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:6}}>
+                              Matched Transactions ({s.matchedTxns.length})
+                            </div>
+                            <div style={{display:"flex",flexDirection:"column",gap:3,maxHeight:140,overflowY:"auto"}}>
+                              {s.matchedTxns.map((t,i) => (
+                                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:11,gap:8}}>
+                                  <span style={{color:MUTED,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{t.month} · {t.desc}</span>
+                                  <span style={{color:col,fontWeight:700,flexShrink:0}}>{fmt(t.amount)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
@@ -1388,6 +1417,15 @@ function Payoffs({wide}) {
               <FieldInput label="Name" val={newDebt.name} onChange={v=>setNewDebt(p=>({...p,name:v}))} placeholder="Car loan"/>
               <FieldInput label="Monthly Payment $" val={newDebt.payment} onChange={v=>setNewDebt(p=>({...p,payment:v}))} type="number" placeholder="250"/>
               <FieldInput label="Orig. Balance $" val={newDebt.balance} onChange={v=>setNewDebt(p=>({...p,balance:v}))} placeholder="12000"/>
+              <FieldInput label="Current Balance $ (optional override)" val={newDebt.manualBalance} onChange={v=>setNewDebt(p=>({...p,manualBalance:v}))} type="number" placeholder="Leave blank for auto"/>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px"}}>Icon</div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <EmojiInput value={newDebt.icon} onChange={v=>setNewDebt(p=>({...p,icon:v}))}
+                    inputStyle={{width:44,background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"5px 4px",color:TEXT,fontSize:20,outline:"none",textAlign:"center",cursor:"pointer"}}/>
+                  <span style={{fontSize:10,color:MUTED}}><kbd style={{background:"#1e2535",border:`1px solid ${BORDER}`,borderRadius:4,padding:"1px 5px",fontSize:10,fontFamily:"monospace"}}>Win + .</kbd> for more</span>
+                </div>
+              </div>
               <div>
                 <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:6}}>Color</div>
                 <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
@@ -2952,7 +2990,7 @@ function EmojiInput({ value, onChange, inputStyle }) {
           ))}
           <div style={{gridColumn:"1/-1",borderTop:`1px solid ${BORDER}`,paddingTop:6,marginTop:4,
             fontSize:10,color:MUTED,textAlign:"center"}}>
-            or type / paste any emoji above
+            or type · paste · <kbd style={{background:"#0d1117",border:`1px solid ${BORDER}`,borderRadius:3,padding:"0 4px",fontFamily:"monospace",fontSize:9}}>Win+.</kbd> for more
           </div>
         </div>
       )}
