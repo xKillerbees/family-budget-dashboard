@@ -337,7 +337,7 @@ function CashFlowSankey({ viewMode }) {
 function Summary({wide, isMobile}) {
   const [view, setView] = useState("norm");
   const [expandedCat, setExpandedCat] = useState(null);
-  const { summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus, takeHome, selectedMonth, dashName } = useBudget();
+  const { summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus, takeHome, selectedMonth, dashName, oneTimes } = useBudget();
 
   // Merge all transactions for the expandable drill-down
   const ALL_TXNS = useMemo(() => [
@@ -635,16 +635,21 @@ function Summary({wide, isMobile}) {
           </Card>
           <Card>
             <Label>One-Time Items (excluded from recurring)</Label>
-            {ONE_TIMES.map(t=>(
-              <div key={t.name} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:`1px solid ${BORDER}`}}>
-                <div><div style={{fontSize:13,color:MUTED}}>{t.name}</div><div style={{fontSize:11,color:DIM}}>{t.cat}</div></div>
-                <span style={{fontSize:14,fontWeight:700,color:"#f59e0b",fontVariantNumeric:"tabular-nums"}}>{fmt(t.amount)}</span>
-              </div>
-            ))}
+            {oneTimes.length === 0
+              ? <div style={{fontSize:12,color:MUTED}}>No one-time items yet — add them in Settings.</div>
+              : oneTimes.map((t,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:`1px solid ${BORDER}`}}>
+                  <div><div style={{fontSize:13,color:MUTED}}>{t.name}</div><div style={{fontSize:11,color:DIM}}>{t.cat}</div></div>
+                  <span style={{fontSize:14,fontWeight:700,color:"#f59e0b",fontVariantNumeric:"tabular-nums"}}>{fmt(t.amount)}</span>
+                </div>
+              ))
+            }
+            {oneTimes.length > 0 && (
             <div style={{display:"flex",justifyContent:"space-between",paddingTop:10}}>
               <span style={{fontSize:13,fontWeight:700,color:"#94a3b8"}}>Total excluded</span>
-              <span style={{fontSize:15,fontWeight:900,color:"#f59e0b",fontVariantNumeric:"tabular-nums"}}>{fmt(ONE_TIME_TOTAL)}</span>
+              <span style={{fontSize:15,fontWeight:900,color:"#f59e0b",fontVariantNumeric:"tabular-nums"}}>{fmt(oneTimes.reduce((s,o)=>s+o.amount,0))}</span>
             </div>
+            )}
           </Card>
         </div>
       </div>
@@ -674,7 +679,7 @@ const ITEM_CATS = [
 ];
 
 function Scenarios({ wide, isMobile }) {
-  const { payoffs, normSurplus, takeHome, t2CarryIn, groceryGoal, checkTxns, ccTxns, selectedMonth } = useBudget();
+  const { payoffs, normSurplus, takeHome, t2CarryIn, groceryGoal, checkTxns, ccTxns, selectedMonth, showTithe } = useBudget();
   const t2Balance = t2CarryIn;
 
   const [plans, setPlans] = useState([
@@ -790,9 +795,11 @@ function Scenarios({ wide, isMobile }) {
               </div>
             </div>
             <div style={{display:"flex",gap:10,marginTop:12,flexWrap:"wrap"}}>
+              {showTithe && (
               <div style={{padding:"10px 14px",borderRadius:10,background:"#22c55e11",border:"1px solid #22c55e33",fontSize:12,color:"#22c55e",fontWeight:700}}>
                 ⛪ 2nd Tithe: {fmt(t2Balance)}
               </div>
+              )}
               <div style={{padding:"10px 14px",borderRadius:10,background:normSurplus<0?"#ef444411":"#22c55e11",border:`1px solid ${normSurplus<0?"#ef444433":"#22c55e33"}`,fontSize:12,color:normSurplus<0?"#ef4444":"#22c55e",fontWeight:700}}>
                 📅 Monthly surplus: {normSurplus>=0?"+":"−"}{fmt(Math.abs(normSurplus))}
               </div>
@@ -833,7 +840,7 @@ function Scenarios({ wide, isMobile }) {
                       </div>
                     </div>
                     <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
-                      <button onClick={()=>updatePlan(plan.id,"startingFunds",t2Balance)} style={{padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",background:"#7c6af722",color:"#7c6af7",border:"1px solid #7c6af733"}}>⛪ 2nd Tithe</button>
+                      {showTithe && <button onClick={()=>updatePlan(plan.id,"startingFunds",t2Balance)} style={{padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",background:"#7c6af722",color:"#7c6af7",border:"1px solid #7c6af733"}}>⛪ 2nd Tithe</button>}
                       <button onClick={()=>updatePlan(plan.id,"startingFunds",Math.max(0,normSurplus))} style={{padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e33"}}>📅 Surplus</button>
                     </div>
                   </div>
@@ -1605,6 +1612,7 @@ function Categories({wide, isMobile}) {
 
 // Stable CatSelect — defined outside TxnTable so it doesn't remount every render
 function CatSelect({ t, src, updateTxnCat }) {
+  const { allCats } = useBudget();
   const color = CAT_COLORS[t.cat] || MUTED;
   return (
     <div style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
@@ -1614,7 +1622,7 @@ function CatSelect({ t, src, updateTxnCat }) {
         onChange={e => updateTxnCat(src, t.id, e.target.value)}
         style={{ background: color+"22", border:`1px solid ${color}55`, color, paddingRight:22 }}
       >
-        {VALID_CATS.map(c => <option key={c} value={c}>{c}</option>)}
+        {allCats.map(c => <option key={c} value={c}>{c}</option>)}
       </select>
       <span style={{position:"absolute",right:6,pointerEvents:"none",fontSize:9,color,opacity:.7}}>▾</span>
     </div>
@@ -1623,10 +1631,10 @@ function CatSelect({ t, src, updateTxnCat }) {
 
 // ── SPLIT TRANSACTION MODAL ───────────────────────────────────────────────────
 function SplitModal({ txn, src, onClose }) {
-  const { replaceTxn } = useBudget();
+  const { replaceTxn, allCats } = useBudget();
   const [parts, setParts] = useState([
     { desc: txn.desc, amount: txn.amount, cat: txn.cat },
-    { desc: "", amount: 0, cat: VALID_CATS[0] },
+    { desc: "", amount: 0, cat: allCats[0] },
   ]);
   const [parsing, setParsing] = useState(false);
   const [parseErr, setParseErr] = useState(null);
@@ -1639,7 +1647,7 @@ function SplitModal({ txn, src, onClose }) {
 
   const updatePart = (i, field, val) =>
     setParts(prev => prev.map((p, idx) => idx === i ? { ...p, [field]: val } : p));
-  const addPart = () => setParts(prev => [...prev, { desc: "", amount: 0, cat: VALID_CATS[0] }]);
+  const addPart = () => setParts(prev => [...prev, { desc: "", amount: 0, cat: allCats[0] }]);
   const removePart = (i) => setParts(prev => prev.filter((_, idx) => idx !== i));
 
   const handleImageUpload = (e) => {
@@ -1660,7 +1668,7 @@ function SplitModal({ txn, src, onClose }) {
       const base64 = imgPreview.split(",")[1];
       const mediaType = imgFile?.type || "image/jpeg";
       const prompt = `This is a receipt for a purchase totaling $${txn.amount.toFixed(2)} from "${txn.desc}".
-Parse every line item from the receipt image and assign each one to the most appropriate budget category from this list: ${VALID_CATS.join(", ")}.
+Parse every line item from the receipt image and assign each one to the most appropriate budget category from this list: ${allCats.join(", ")}.
 Return ONLY a valid JSON array with no markdown fences, no explanation, just the array:
 [{"desc":"item name or group","amount":1.23,"cat":"Groceries"}]
 IMPORTANT: The amounts MUST sum to exactly ${txn.amount.toFixed(2)}. Group small items by category if needed.`;
@@ -1690,7 +1698,7 @@ IMPORTANT: The amounts MUST sum to exactly ${txn.amount.toFixed(2)}. Group small
         }
         return { ...p, amount: Math.round(parseFloat(p.amount) * scale * 100) / 100 };
       });
-      setParts(normalized.map(p => ({ desc: p.desc || "", amount: p.amount, cat: VALID_CATS.includes(p.cat) ? p.cat : VALID_CATS[0] })));
+      setParts(normalized.map(p => ({ desc: p.desc || "", amount: p.amount, cat: allCats.includes(p.cat) ? p.cat : allCats[0] })));
     } catch (e) { setParseErr("Parse failed: " + e.message); }
     setParsing(false);
   };
@@ -1753,7 +1761,7 @@ IMPORTANT: The amounts MUST sum to exactly ${txn.amount.toFixed(2)}. Group small
                   style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%",fontVariantNumeric:"tabular-nums"}}/>
                 <select value={p.cat} onChange={e => updatePart(i, "cat", e.target.value)}
                   style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 8px",color:TEXT,fontSize:12,outline:"none",width:"100%"}}>
-                  {VALID_CATS.map(c => <option key={c} style={{background:"#161b27"}}>{c}</option>)}
+                  {allCats.map(c => <option key={c} style={{background:"#161b27"}}>{c}</option>)}
                 </select>
                 <button onClick={() => removePart(i)} disabled={parts.length <= 1}
                   style={{background:"#ef444415",border:"none",borderRadius:6,color:parts.length<=1?BORDER:"#ef4444",fontSize:13,cursor:parts.length<=1?"default":"pointer",padding:"4px 0",width:28,textAlign:"center"}}>✕</button>
@@ -1798,7 +1806,7 @@ IMPORTANT: The amounts MUST sum to exactly ${txn.amount.toFixed(2)}. Group small
 
 // ── TRANSACTION TABLE ─────────────────────────────────────────────────────────
 function TxnTable({ src, isMobile }) {
-  const { checkTxns, ccTxns, updateTxnCat, deleteTxn, replaceTxn, selectedMonth, availableMonths } = useBudget();
+  const { checkTxns, ccTxns, updateTxnCat, deleteTxn, replaceTxn, selectedMonth, availableMonths, addTxns, allCats } = useBudget();
   const [splitTxn, setSplitTxn] = useState(null); // txn being split
   const allTxns = src === "checking" ? checkTxns : ccTxns;
 
@@ -1819,9 +1827,79 @@ function TxnTable({ src, isMobile }) {
 
   const visibleTotal = filtered.filter(t => t.cat !== "Income" && t.cat !== "Transfer").reduce((s,t) => s + t.amount, 0);
 
+  // ── Manual add form ──────────────────────────────────────────────────────────
+  const [showAdd, setShowAdd] = useState(false);
+  const [newDate, setNewDate] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+  const [newAmt,  setNewAmt]  = useState("");
+  const [newCat,  setNewCat]  = useState(allCats[0]);
+  const [newMon,  setNewMon]  = useState(monthFilter);
+  useEffect(() => { setNewMon(monthFilter); }, [monthFilter]);
+
+  const submitManual = () => {
+    const amount = parseFloat(newAmt);
+    if (!newDesc.trim() || isNaN(amount)) return;
+    const date = newDate.trim() || "01/01";
+    addTxns(src, [{ date, desc: newDesc.trim(), amount, cat: newCat, month: newMon, note: "" }]);
+    setNewDesc(""); setNewAmt(""); setNewDate("");
+    setShowAdd(false);
+  };
+
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {splitTxn && <SplitModal txn={splitTxn} src={src} onClose={() => setSplitTxn(null)}/>}
+
+      {/* Manual add */}
+      <div style={{display:"flex",justifyContent:"flex-end"}}>
+        <button onClick={()=>setShowAdd(v=>!v)}
+          style={{padding:"8px 18px",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",
+            background:showAdd?ACCENT+"22":SURFACE, color:showAdd?ACCENT:MUTED,
+            border:`1px solid ${showAdd?ACCENT:BORDER}`,transition:"all .15s"}}>
+          {showAdd ? "✕ Cancel" : "+ Add Transaction"}
+        </button>
+      </div>
+      {showAdd && (
+        <Card glow={ACCENT}>
+          <Label>➕ New Transaction</Label>
+          <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"flex-end"}}>
+            <div style={{display:"flex",flexDirection:"column",gap:4,flex:"0 0 auto"}}>
+              <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Month</span>
+              <select value={newMon} onChange={e=>setNewMon(e.target.value)}
+                style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none"}}>
+                {MONTHS.map(m=><option key={m}>{m}</option>)}
+              </select>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:4,flex:"0 0 80px"}}>
+              <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Date (MM/DD)</span>
+              <input value={newDate} onChange={e=>setNewDate(e.target.value)} placeholder="01/15"
+                style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:4,flex:"1 1 160px"}}>
+              <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Description</span>
+              <input value={newDesc} onChange={e=>setNewDesc(e.target.value)} placeholder="Merchant or payee"
+                style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:4,flex:"0 0 100px"}}>
+              <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Amount ($)</span>
+              <input type="number" value={newAmt} onChange={e=>setNewAmt(e.target.value)} placeholder="0.00" step="0.01"
+                style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:4,flex:"1 1 140px"}}>
+              <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Category</span>
+              <select value={newCat} onChange={e=>setNewCat(e.target.value)}
+                style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}>
+                {allCats.map(c=><option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <button onClick={submitManual}
+              style={{padding:"8px 20px",borderRadius:8,background:ACCENT,color:"#0d1117",fontWeight:800,fontSize:13,border:"none",cursor:"pointer",flexShrink:0,alignSelf:"flex-end"}}>
+              Save
+            </button>
+          </div>
+          <div style={{fontSize:11,color:MUTED,marginTop:8}}>Tip: use a negative amount for credits/refunds.</div>
+        </Card>
+      )}
+
       {/* Filters */}
       <Card>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
@@ -1841,7 +1919,7 @@ function TxnTable({ src, isMobile }) {
           <select value={catFilter} onChange={e=>setCatFilter(e.target.value)}
             style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,flex:"1 1 110px",minWidth:80}}>
             <option value="All">All Categories</option>
-            {VALID_CATS.map(c=><option key={c}>{c}</option>)}
+            {allCats.map(c=><option key={c}>{c}</option>)}
           </select>
           <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
             style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,flex:"0 0 auto"}}>
@@ -2550,7 +2628,7 @@ Return ONLY a JSON array — no markdown, no explanation, nothing else. Each obj
 - "date": string "MM/DD" format
 - "desc": string — merchant/description (keep concise, max 40 chars)
 - "amount": number — POSITIVE for expenses/charges, NEGATIVE for credits/returns/refunds
-- "cat": string — MUST be exactly one of: ${VALID_CATS.filter(c=>c!=="Income"&&c!=="Transfer").join(", ")}
+- "cat": string — MUST be exactly one of: ${allCats.filter(c=>c!=="Income"&&c!=="Transfer").join(", ")}
 - "note": string — brief note if useful, empty string otherwise
 
 Categorization rules:
@@ -2778,6 +2856,27 @@ function Trends({ wide, isMobile }) {
 
 
 // ── SETTINGS ────────────────────────────────────────────────────────────────
+function NewCatInput({ onAdd, allCats }) {
+  const [val, setVal] = useState("");
+  const submit = () => {
+    const name = val.trim();
+    if (!name || allCats.map(c=>c.toLowerCase()).includes(name.toLowerCase())) return;
+    onAdd(name);
+    setVal("");
+  };
+  return (
+    <div style={{display:"flex",gap:8}}>
+      <input value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}
+        placeholder="New category name…"
+        style={{flex:1,background:BG,border:`1px solid #06b6d4`,borderRadius:8,padding:"7px 12px",color:TEXT,fontSize:13,outline:"none"}}/>
+      <button onClick={submit}
+        style={{padding:"7px 16px",borderRadius:8,background:"#06b6d4",color:"#0d1117",fontWeight:800,fontSize:13,border:"none",cursor:"pointer"}}>
+        + Add
+      </button>
+    </div>
+  );
+}
+
 function Settings({ isMobile }) {
   const {
     takeHome, setTakeHome,
@@ -2792,13 +2891,14 @@ function Settings({ isMobile }) {
     dashName, setDashName,
     showTithe, setShowTithe,
     showABA,   setShowABA,
+    customCats, setCustomCats, allCats,
   } = useBudget();
 
   const [thInput, setThInput]     = useState(takeHome || "");
   const [t2Input, setT2Input]     = useState(t2CarryIn || "");
   const [otDesc, setOtDesc]       = useState("");
   const [otAmt, setOtAmt]         = useState("");
-  const [otCat, setOtCat]         = useState(VALID_CATS[0]);
+  const [otCat, setOtCat]         = useState(allCats[0]);
   const [confirmClear, setConfirmClear] = useState(null);
   const [importErr, setImportErr] = useState(null);
   const [apiKeyInput, setApiKeyInput] = useState(() => { try { return localStorage.getItem("budget_apikey") || ""; } catch { return ""; } });
@@ -2907,6 +3007,24 @@ function Settings({ isMobile }) {
         {apiKeyInput && <div style={{fontSize:11,color:"#22c55e",marginTop:8}}>✓ Key loaded · {apiKeyInput.slice(0,12)}•••</div>}
       </Card>
 
+      {/* Custom Categories */}
+      <Card glow="#06b6d4" style={{marginTop:16}}>
+        <Label>🏷️ Custom Categories</Label>
+        <div style={{fontSize:12,color:MUTED,marginBottom:12}}>Add your own spending categories. They'll appear everywhere categories are listed.</div>
+        {customCats.length > 0 && (
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+            {customCats.map((c,i) => (
+              <div key={c} style={{display:"flex",alignItems:"center",gap:5,background:"#06b6d411",border:"1px solid #06b6d433",borderRadius:99,padding:"3px 10px"}}>
+                <span style={{fontSize:12,color:"#06b6d4",fontWeight:600}}>{c}</span>
+                <button onClick={() => setCustomCats(prev => prev.filter((_,j) => j !== i))}
+                  style={{background:"none",border:"none",color:"#06b6d4",fontSize:12,cursor:"pointer",padding:0,lineHeight:1,opacity:.7}}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <NewCatInput onAdd={name => setCustomCats(prev => prev.includes(name) ? prev : [...prev, name])} allCats={allCats} />
+      </Card>
+
       {/* Waterfall Visibility */}
       <Card glow="#f97316" style={{marginTop:16}}>
         <Label>📊 Payoff Waterfall — Visible Steps</Label>
@@ -2993,7 +3111,8 @@ function Settings({ isMobile }) {
         <div style={{marginTop:8,fontSize:12,color:accentSet}}>Current: {takeHome > 0 ? `$${takeHome.toLocaleString()}` : "Not set"}</div>
       </Card>
 
-      {/* 2nd Tithe Carry-In */}
+      {/* 2nd Tithe Carry-In — only visible when Tithe feature is on */}
+      {showTithe && (
       <Card glow="#22c55e" style={{marginTop:16}}>
         <Label>2nd Tithe Opening Balance</Label>
         <div style={{fontSize:12,color:MUTED,marginBottom:10}}>Balance in your feast savings account at the start of this year.</div>
@@ -3013,13 +3132,14 @@ function Settings({ isMobile }) {
         </div>
         <div style={{marginTop:8,fontSize:12,color:"#22c55e"}}>Current: {t2CarryIn > 0 ? `$${t2CarryIn.toLocaleString()}` : "Not set"}</div>
       </Card>
+      )}
 
       {/* Budget Targets per Category */}
       <Card glow="#f97316" style={{marginTop:16}}>
         <Label>Monthly Budget Targets</Label>
         <div style={{fontSize:12,color:MUTED,marginBottom:12}}>Set your target spending limit per category. Leave blank for no limit.</div>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          {SUMMARY_ROWS.map(r => (
+          {summaryRows.map(r => (
             <div key={r.cat} style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={{fontSize:14,width:140,color:TEXT,flexShrink:0}}>{r.icon} {r.cat}</span>
               <span style={{color:MUTED}}>$</span>
@@ -3063,7 +3183,7 @@ function Settings({ isMobile }) {
             style={{width:90,background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"6px 10px",color:TEXT,fontSize:13,outline:"none"}}/>
           <select value={otCat} onChange={e => setOtCat(e.target.value)}
             style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"6px 10px",color:TEXT,fontSize:13,outline:"none"}}>
-            {VALID_CATS.filter(c => c !== "Income" && c !== "Transfer").map(c => <option key={c}>{c}</option>)}
+            {allCats.filter(c => c !== "Income" && c !== "Transfer").map(c => <option key={c}>{c}</option>)}
           </select>
           <button onClick={() => {
             if (!otDesc || !otAmt) return;
@@ -3110,7 +3230,7 @@ function Settings({ isMobile }) {
 
 
 function StatementImporter({ wide, isMobile }) {
-  const { addTxns, checkTxns, ccTxns } = useBudget();
+  const { addTxns, checkTxns, ccTxns, allCats } = useBudget();
 
   // Steps: "upload" → "parsing" → "review" → "done"
   const [step, setStep]         = useState("upload");
@@ -3118,29 +3238,100 @@ function StatementImporter({ wide, isMobile }) {
   const [month, setMonth]       = useState(MONTHS[1]); // Feb default
   const [dragOver, setDragOver] = useState(false);
   const [fileName, setFileName] = useState(null);
+  const [fileType, setFileType] = useState(null); // "pdf" | "csv"
   const [pdfB64, setPdfB64]     = useState(null);
+  const [csvText, setCsvText]   = useState(null);
   const [parseError, setParseError] = useState(null);
   const [parsed, setParsed]     = useState([]); // raw from Claude
   const [reviewed, setReviewed] = useState([]); // user-edited
   const [editingIdx, setEditingIdx] = useState(null);
 
-  // ── Read PDF as base64 ──────────────────────────────────────────────────────
-  const loadPdf = file => {
-    if (!file || file.type !== "application/pdf") {
-      setParseError("Please upload a PDF file.");
-      return;
+  // ── CSV parser (client-side, no AI needed) ──────────────────────────────────
+  const splitCSVLine = (line, delim) => {
+    const result = []; let field = ""; let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      if (line[i] === '"') { inQ = !inQ; }
+      else if (line[i] === delim && !inQ) { result.push(field.trim()); field = ""; }
+      else { field += line[i]; }
     }
-    setFileName(file.name);
+    result.push(field.trim());
+    return result.map(f => f.replace(/^"|"$/g, ""));
+  };
+  const parseCSVDate = raw => {
+    if (!raw) return null;
+    raw = raw.trim().replace(/^"|"$/g, "");
+    let m = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-]\d{2,4}$/);
+    if (m) return `${m[1].padStart(2,"0")}/${m[2].padStart(2,"0")}`;
+    m = raw.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+    if (m) return `${m[2].padStart(2,"0")}/${m[3].padStart(2,"0")}`;
+    return null;
+  };
+  const parseCSVData = text => {
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) return [];
+    const delim = [",", "\t", ";"].reduce((best, d) => {
+      const n = (lines[0].match(new RegExp(d === "." ? "\\." : d, "g")) || []).length;
+      return n > best.n ? { d, n } : best;
+    }, { d: ",", n: 0 }).d;
+    const headers = splitCSVLine(lines[0], delim).map(h => h.toLowerCase().replace(/[^a-z]/g, ""));
+    const hasHeaders = headers.some(h => h.includes("date") || h.includes("desc") || h.includes("amount"));
+    const dataStart = hasHeaders ? 1 : 0;
+    const idx = {
+      date: headers.findIndex(h => h.includes("date") || h.includes("posted") || h === "trans"),
+      desc: headers.findIndex(h => ["description","desc","name","merchant","payee","memo","detail","narration"].some(k => h.includes(k))),
+      amt:  headers.findIndex(h => h === "amount" || h === "amt"),
+      deb:  headers.findIndex(h => h.includes("debit") || h.includes("withdrawal") || h.includes("charge")),
+      cred: headers.findIndex(h => h.includes("credit") || h.includes("deposit")),
+    };
+    const cleanNum = s => parseFloat((s || "").replace(/[$,\s]/g, "").replace(/\((.+)\)/, "-$1"));
+    return lines.slice(dataStart).flatMap(line => {
+      const cols = splitCSVLine(line, delim);
+      if (cols.length < 2) return [];
+      const date = parseCSVDate(cols[idx.date >= 0 ? idx.date : 0]);
+      if (!date) return [];
+      const desc = (cols[idx.desc >= 0 ? idx.desc : 1] || "").trim().slice(0, 60);
+      if (!desc) return [];
+      let amount;
+      if (idx.amt >= 0) { amount = cleanNum(cols[idx.amt]); }
+      else if (idx.deb >= 0 || idx.cred >= 0) {
+        const deb = idx.deb >= 0 ? cleanNum(cols[idx.deb]) : 0;
+        const cred = idx.cred >= 0 ? cleanNum(cols[idx.cred]) : 0;
+        amount = (isNaN(deb) ? 0 : deb) - (isNaN(cred) ? 0 : cred);
+      } else {
+        for (let j = cols.length - 1; j >= 0; j--) {
+          const n = cleanNum(cols[j]); if (!isNaN(n)) { amount = n; break; }
+        }
+      }
+      if (amount === undefined || isNaN(amount)) return [];
+      return [{ date, desc, amount, cat: "Snacks/Misc", note: "" }];
+    });
+  };
+
+  // ── Load file (PDF or CSV) ───────────────────────────────────────────────────
+  const loadFile = file => {
+    if (!file) return;
     setParseError(null);
-    const reader = new FileReader();
-    reader.onload = e => setPdfB64(e.target.result.split(",")[1]);
-    reader.readAsDataURL(file);
+    if (file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv") {
+      setFileName(file.name); setFileType("csv");
+      setPdfB64(null);
+      const reader = new FileReader();
+      reader.onload = e => setCsvText(e.target.result);
+      reader.readAsText(file);
+    } else if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+      setFileName(file.name); setFileType("pdf");
+      setCsvText(null);
+      const reader = new FileReader();
+      reader.onload = e => setPdfB64(e.target.result.split(",")[1]);
+      reader.readAsDataURL(file);
+    } else {
+      setParseError("Please upload a PDF or CSV file.");
+    }
   };
 
   const onDrop = e => {
     e.preventDefault();
     setDragOver(false);
-    loadPdf(e.dataTransfer.files[0]);
+    loadFile(e.dataTransfer.files[0]);
   };
 
   // ── Build a local category dictionary from existing transactions ──────────
@@ -3175,7 +3366,32 @@ function StatementImporter({ wide, isMobile }) {
   // Step 3: Only send unmatched descriptions to AI for categorization — cheaper
   const [matchStats, setMatchStats] = useState(null); // { local, ai, total }
 
+  const parseCSVAndReview = () => {
+    if (!csvText) { setParseError("No CSV loaded."); return; }
+    setStep("parsing");
+    setParseError(null);
+    try {
+      const dict = buildLocalDict();
+      const raw = parseCSVData(csvText);
+      if (raw.length === 0) { setParseError("No transactions found. Check the CSV format."); setStep("upload"); return; }
+      const withCats = raw.map(t => {
+        const localCat = findLocalCat(t.desc, dict);
+        return { ...t, cat: localCat || "Snacks/Misc", _localMatch: !!localCat };
+      });
+      const filtered = stmtSrc === "checking" ? withCats : withCats.filter(t => t.cat !== "Income" && t.cat !== "Transfer");
+      const localCount = filtered.filter(t => t._localMatch).length;
+      setMatchStats({ local: localCount, ai: 0, total: filtered.length, csv: true });
+      setParsed(filtered);
+      setReviewed(filtered.map(t => ({ ...t, _include: true })));
+      setStep("review");
+    } catch (err) {
+      setParseError("CSV parse failed: " + err.message);
+      setStep("upload");
+    }
+  };
+
   const parse = async () => {
+    if (fileType === "csv") { parseCSVAndReview(); return; }
     if (!ANTHROPIC_API_KEY) { setParseError("Add your Anthropic API key to the top of App.jsx to enable AI import."); return; }
     if (!pdfB64) { setParseError("No PDF loaded."); return; }
     setStep("parsing");
@@ -3237,7 +3453,7 @@ Do NOT include a "cat" field.`;
           "transfers between own accounts, CC payments -> Transfer"
         ].join("\n");
         const catPrompt = [
-          "Categorize each merchant into exactly one of: " + VALID_CATS.join(", "),
+          "Categorize each merchant into exactly one of: " + allCats.join(", "),
           "",
           "Rules:",
           catRules,
@@ -3286,7 +3502,7 @@ Do NOT include a "cat" field.`;
   };
 
   const reset = () => {
-    setStep("upload"); setFileName(null); setPdfB64(null);
+    setStep("upload"); setFileName(null); setFileType(null); setPdfB64(null); setCsvText(null);
     setParsed([]); setReviewed([]); setParseError(null); setEditingIdx(null);
   };
 
@@ -3349,15 +3565,15 @@ Do NOT include a "cat" field.`;
               background:dragOver?accentImport+"09":fileName?accentImport+"05":BG,
               transition:"all .2s",
             }}>
-            <input id="pdf-input" type="file" accept=".pdf" style={{display:"none"}}
-              onChange={e=>loadPdf(e.target.files[0])}/>
-            <div style={{fontSize:40,marginBottom:12}}>{fileName?"✅":"📄"}</div>
+            <input id="pdf-input" type="file" accept=".pdf,.csv" style={{display:"none"}}
+              onChange={e=>loadFile(e.target.files[0])}/>
+            <div style={{fontSize:40,marginBottom:12}}>{fileName?"✅":fileType==="csv"?"📊":"📄"}</div>
             {fileName
               ? <><div style={{fontSize:15,fontWeight:700,color:accentImport,marginBottom:4}}>{fileName}</div>
-                  <div style={{fontSize:12,color:MUTED}}>Ready to parse · click to change</div></>
-              : <><div style={{fontSize:15,fontWeight:600,color:TEXT,marginBottom:6}}>Drop your bank statement PDF here</div>
-                  <div style={{fontSize:12,color:MUTED}}>or click to browse · PDF files only</div>
-                  <div style={{fontSize:11,color:DIM,marginTop:8}}>Works with Chase, Citi, Bank of America, Wells Fargo, and most US banks</div></>
+                  <div style={{fontSize:12,color:MUTED}}>{fileType==="csv"?"CSV ready — no AI needed":"Ready to parse · click to change"} · click to change</div></>
+              : <><div style={{fontSize:15,fontWeight:600,color:TEXT,marginBottom:6}}>Drop your bank statement here</div>
+                  <div style={{fontSize:12,color:MUTED}}>or click to browse · PDF or CSV</div>
+                  <div style={{fontSize:11,color:DIM,marginTop:8}}>PDF: AI-powered extraction · CSV: instant client-side parse (no AI needed)</div></>
             }
           </div>
 
@@ -3369,14 +3585,19 @@ Do NOT include a "cat" field.`;
 
           <button
             onClick={parse}
-            disabled={!pdfB64}
+            disabled={!pdfB64 && !csvText}
             style={{
               marginTop:16,width:"100%",padding:"13px",borderRadius:12,fontSize:15,fontWeight:800,
-              background:pdfB64?`linear-gradient(135deg,${accentImport},#818cf8)`:"#1e2535",
-              color:pdfB64?BG:DIM,cursor:pdfB64?"pointer":"not-allowed",
+              background:(pdfB64||csvText)?`linear-gradient(135deg,${accentImport},#818cf8)`:"#1e2535",
+              color:(pdfB64||csvText)?BG:DIM,cursor:(pdfB64||csvText)?"pointer":"not-allowed",
               border:"none",transition:"all .2s",letterSpacing:".2px",
             }}>
-            {pdfB64 ? `✨ Parse ${month} ${stmtSrc === "checking" ? "Checking" : "Credit Card"} Statement` : "Upload a PDF first"}
+            {csvText
+              ? `📊 Import ${month} CSV (no AI needed)`
+              : pdfB64
+                ? `✨ Parse ${month} ${stmtSrc === "checking" ? "Checking" : "Credit Card"} Statement`
+                : "Upload a PDF or CSV first"
+            }
           </button>
         </Card>
       )}
@@ -3411,9 +3632,14 @@ Do NOT include a "cat" field.`;
                 </div>
                 {matchStats && (
                   <div style={{marginTop:6,display:"flex",gap:8,flexWrap:"wrap"}}>
-                    <span style={{fontSize:11,padding:"2px 8px",borderRadius:99,background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e44",fontWeight:700}}>
-                      ✓ {matchStats.local} matched locally (free)
-                    </span>
+                    {matchStats.csv
+                      ? <span style={{fontSize:11,padding:"2px 8px",borderRadius:99,background:"#06b6d422",color:"#06b6d4",border:"1px solid #06b6d444",fontWeight:700}}>
+                          📊 CSV parsed client-side · no AI used
+                        </span>
+                      : <span style={{fontSize:11,padding:"2px 8px",borderRadius:99,background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e44",fontWeight:700}}>
+                          ✓ {matchStats.local} matched locally (free)
+                        </span>
+                    }
                     {matchStats.ai > 0 && (
                       <span style={{fontSize:11,padding:"2px 8px",borderRadius:99,background:"#818cf822",color:"#818cf8",border:"1px solid #818cf844",fontWeight:700}}>
                         ✨ {matchStats.ai} categorized by AI
@@ -3496,7 +3722,7 @@ Do NOT include a "cat" field.`;
                         onChange={e=>setReviewed(prev=>prev.map((r,i)=>i===idx?{...r,cat:e.target.value}:r))}
                         style={{background:color+"22",border:`1px solid ${color}55`,color,paddingRight:22}}
                       >
-                        {VALID_CATS.map(c=><option key={c} value={c}>{c}</option>)}
+                        {allCats.map(c=><option key={c} value={c}>{c}</option>)}
                       </select>
                       <span style={{position:"absolute",right:6,pointerEvents:"none",fontSize:9,color,opacity:.7}}>▾</span>
                     </div>
@@ -3627,6 +3853,9 @@ export default function BudgetDashboardClean() {
   const [dashName, setDashName] = useState(() => ls.get("budget_dashName") || "My Budget");
   const [showTithe, setShowTithe] = useState(() => ls.get("budget_showTithe") !== "0");
   const [showABA, setShowABA]   = useState(() => ls.get("budget_showABA")   !== "0");
+  const [customCats, setCustomCats] = useState(() => ls.getJSON("budget_customCats", []));
+  useEffect(() => { ls.setJSON("budget_customCats", customCats); }, [customCats]);
+  const allCats = useMemo(() => [...VALID_CATS, ...customCats], [customCats]);
   useEffect(() => { ls.set("budget_dashName",  dashName); }, [dashName]);
   useEffect(() => { ls.set("budget_showTithe", showTithe ? "1" : "0"); }, [showTithe]);
   useEffect(() => { ls.set("budget_showABA",   showABA   ? "1" : "0"); }, [showABA]);
@@ -3726,6 +3955,7 @@ export default function BudgetDashboardClean() {
     dashName, setDashName,
     showTithe, setShowTithe,
     showABA,   setShowABA,
+    customCats, setCustomCats, allCats,
   };
 
   const pages = {
