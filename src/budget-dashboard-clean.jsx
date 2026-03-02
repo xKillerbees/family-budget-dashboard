@@ -3580,11 +3580,6 @@ export default function BudgetDashboardClean() {
     return ls.getJSON("budget_ccTxns", []);
   });
 
-  // Redirect away from tabs that have been toggled off
-  useEffect(() => {
-    if (!showTithe && page === "tithe") setPage("summary");
-    if (!showABA   && page === "aba")   setPage("summary");
-  }, [showTithe, showABA, page]);
   const [selectedMonth, setSelectedMonth] = useState("January");
 
   // Settings state — all persisted
@@ -3635,6 +3630,12 @@ export default function BudgetDashboardClean() {
   useEffect(() => { ls.set("budget_dashName",  dashName); }, [dashName]);
   useEffect(() => { ls.set("budget_showTithe", showTithe ? "1" : "0"); }, [showTithe]);
   useEffect(() => { ls.set("budget_showABA",   showABA   ? "1" : "0"); }, [showABA]);
+
+  // Redirect away from tabs that have been toggled off
+  useEffect(() => {
+    if (!showTithe && page === "tithe") setPage("summary");
+    if (!showABA   && page === "aba")   setPage("summary");
+  }, [showTithe, showABA, page]);
 
   const updateTxnCat = useCallback((src, id, newCat) => {
     if (src === "checking") setCheckTxns(prev => prev.map(t => t.id === id ? { ...t, cat: newCat } : t));
