@@ -2909,7 +2909,32 @@ function Settings({ isMobile }) {
     customCats, setCustomCats, allCats,
     abaSettings, setAbaSettings,
     titheSettings, setTitheSettings,
+    retargetCat,
   } = useBudget();
+
+  const [deletingCat, setDeletingCat] = useState(null); // name of custom cat pending delete
+  const [moveTo, setMoveTo]           = useState("");
+
+  const handleDeleteClick = (catName) => {
+    const txnCount = [...checkTxns, ...ccTxns].filter(t => t.cat === catName).length;
+    if (txnCount === 0) {
+      // No transactions — delete immediately
+      setCustomCats(prev => prev.filter(c => c.name !== catName));
+    } else {
+      // Has transactions — require move-to selection
+      const firstOther = allCats.find(c => c !== catName) || "";
+      setMoveTo(firstOther);
+      setDeletingCat(catName);
+    }
+  };
+
+  const confirmDelete = () => {
+    if (!deletingCat || !moveTo) return;
+    retargetCat(deletingCat, moveTo);
+    setCustomCats(prev => prev.filter(c => c.name !== deletingCat));
+    setDeletingCat(null);
+    setMoveTo("");
+  };
 
   const [thInput, setThInput]     = useState(takeHome || "");
   const [t2Input, setT2Input]     = useState(t2CarryIn || "");
@@ -3029,15 +3054,61 @@ function Settings({ isMobile }) {
         <Label>🏷️ Custom Categories</Label>
         <div style={{fontSize:12,color:MUTED,marginBottom:12}}>Add categories with a custom icon and color. They appear everywhere categories are listed.</div>
         {customCats.length > 0 && (
-          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
-            {customCats.map((c,i) => (
-              <div key={c.name} style={{display:"flex",alignItems:"center",gap:5,background:c.color+"22",border:`1px solid ${c.color}44`,borderRadius:99,padding:"3px 10px"}}>
-                <span style={{fontSize:14}}>{c.icon}</span>
-                <span style={{fontSize:12,color:c.color,fontWeight:600}}>{c.name}</span>
-                <button onClick={() => setCustomCats(prev => prev.filter((_,j) => j !== i))}
-                  style={{background:"none",border:"none",color:c.color,fontSize:12,cursor:"pointer",padding:0,lineHeight:1,opacity:.7}}>✕</button>
-              </div>
-            ))}
+          <div style={{marginBottom:12}}>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom: deletingCat ? 12 : 0}}>
+              {customCats.map(c => {
+                const isPending = deletingCat === c.name;
+                return (
+                  <div key={c.name} style={{display:"flex",alignItems:"center",gap:5,
+                    background: isPending ? "#ef444422" : c.color+"22",
+                    border:`1px solid ${isPending ? "#ef444466" : c.color+"44"}`,
+                    borderRadius:99,padding:"3px 10px",transition:"all .15s"}}>
+                    <span style={{fontSize:14}}>{c.icon}</span>
+                    <span style={{fontSize:12,color: isPending ? "#ef4444" : c.color,fontWeight:600}}>{c.name}</span>
+                    <button onClick={() => isPending ? setDeletingCat(null) : handleDeleteClick(c.name)}
+                      style={{background:"none",border:"none",color: isPending ? "#ef4444" : c.color,
+                        fontSize:12,cursor:"pointer",padding:0,lineHeight:1,opacity:.7}}>
+                      {isPending ? "↩" : "✕"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Move-and-confirm panel — shown when a cat with transactions is being deleted */}
+            {deletingCat && (() => {
+              const txnCount = [...checkTxns, ...ccTxns].filter(t => t.cat === deletingCat).length;
+              const pendingCat = customCats.find(c => c.name === deletingCat);
+              return (
+                <div style={{padding:"14px 16px",borderRadius:12,background:"#ef444411",border:"1px solid #ef444433"}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#ef4444",marginBottom:8}}>
+                    🗑 Delete "{deletingCat}"
+                  </div>
+                  <div style={{fontSize:12,color:MUTED,marginBottom:12}}>
+                    <strong style={{color:TEXT}}>{txnCount} transaction{txnCount !== 1 ? "s" : ""}</strong> are assigned to this category.
+                    Choose where to move them before deleting.
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                    <span style={{fontSize:12,color:MUTED,whiteSpace:"nowrap"}}>Move to:</span>
+                    <select value={moveTo} onChange={e => setMoveTo(e.target.value)}
+                      style={{flex:"1 1 160px",background:BG,border:`1px solid ${BORDER}`,borderRadius:8,
+                        padding:"7px 10px",color:TEXT,fontSize:13,outline:"none"}}>
+                      {allCats.filter(c => c !== deletingCat).map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <button onClick={confirmDelete} disabled={!moveTo}
+                      style={{padding:"7px 16px",borderRadius:8,fontWeight:800,fontSize:13,cursor:"pointer",border:"none",
+                        background:moveTo?"#ef4444":"#1e2535",color:moveTo?"white":MUTED,transition:"all .15s",whiteSpace:"nowrap"}}>
+                      ✓ Confirm &amp; Delete
+                    </button>
+                    <button onClick={() => setDeletingCat(null)}
+                      style={{padding:"7px 14px",borderRadius:8,fontWeight:600,fontSize:13,cursor:"pointer",
+                        background:BG,color:MUTED,border:`1px solid ${BORDER}`}}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
         <NewCatInput onAdd={nc => setCustomCats(prev => prev.some(c => c.name === nc.name) ? prev : [...prev, nc])} allCats={allCats} />
@@ -4057,6 +4128,12 @@ export default function BudgetDashboardClean() {
     }
   }, []);
 
+  // Reassign every transaction in oldCat to newCat across both accounts
+  const retargetCat = useCallback((oldCat, newCat) => {
+    setCheckTxns(prev => prev.map(t => t.cat === oldCat ? { ...t, cat: newCat } : t));
+    setCCTxns(prev => prev.map(t => t.cat === oldCat ? { ...t, cat: newCat } : t));
+  }, []);
+
   const addTxns = useCallback((src, newTxns) => {
     if (src === "checking") {
       setCheckTxns(prev => {
@@ -4127,6 +4204,7 @@ export default function BudgetDashboardClean() {
     customCats, setCustomCats, allCats, catColorsAll,
     abaSettings, setAbaSettings,
     titheSettings, setTitheSettings,
+    retargetCat,
   };
 
   const pages = {
