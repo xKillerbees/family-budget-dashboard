@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, createContext, useContext } from "react";
+import { useState, useEffect, useMemo, useCallback, createContext, useContext, useRef } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, ReferenceLine } from "recharts";
 
 // ── YOUR ANTHROPIC API KEY ────────────────────────────────────────────────────
@@ -829,20 +829,13 @@ function Scenarios({ wide, isMobile }) {
                   </div>
 
                   {/* Starting funds */}
-                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:14,padding:"10px 12px",background:BG,borderRadius:10,border:`1px solid ${BORDER}`}}>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>Starting Funds</div>
-                      <div style={{display:"flex",alignItems:"center",gap:6}}>
-                        <span style={{fontSize:16,color:MUTED}}>$</span>
-                        <input type="number" value={plan.startingFunds}
-                          onChange={e=>updatePlan(plan.id,"startingFunds",parseFloat(e.target.value)||0)}
-                          style={{background:"transparent",border:"none",color:TEXT,fontSize:20,fontWeight:900,width:"100%",outline:"none",fontVariantNumeric:"tabular-nums"}}/>
-                      </div>
-                    </div>
-                    <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end",alignItems:"center"}}>
-                      <span style={{fontSize:10,color:MUTED}}>Quick fill:</span>
-                      {showTithe && <button onClick={()=>updatePlan(plan.id,"startingFunds",t2Balance)} style={{padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",background:"#7c6af722",color:"#7c6af7",border:"1px solid #7c6af733"}}>2nd Tithe</button>}
-                      <button onClick={()=>updatePlan(plan.id,"startingFunds",Math.max(0,normSurplus))} style={{padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e33"}}>Surplus</button>
+                  <div style={{padding:"10px 12px",background:BG,borderRadius:10,border:`1px solid ${BORDER}`,marginBottom:14}}>
+                    <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>Starting Funds</div>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:16,color:MUTED}}>$</span>
+                      <input type="number" value={plan.startingFunds}
+                        onChange={e=>updatePlan(plan.id,"startingFunds",parseFloat(e.target.value)||0)}
+                        style={{background:"transparent",border:"none",color:TEXT,fontSize:20,fontWeight:900,width:"100%",outline:"none",fontVariantNumeric:"tabular-nums"}}/>
                     </div>
                   </div>
 
@@ -1135,7 +1128,8 @@ function Payoffs({wide}) {
     return new Set(payoffs.map(p => p.id));
   });
   useEffect(() => { ls.setJSON("budget_payoffEnabled", [...enabled]); }, [enabled]);
-  const [editId,  setEditId]    = useState(null);
+  const [editId,    setEditId]   = useState(null);
+  const [editDraft, setEditDraft] = useState({});
   const [adding,  setAdding]    = useState(false);
   const [newDebt, setNewDebt]   = useState({ name:"", payment:"", balance:"", date:"", months:"", pct:50, color:"#22c55e", keywords:"" });
 
@@ -1147,7 +1141,7 @@ function Payoffs({wide}) {
   const removePayoff = id => {
     setPayoffs(prev => prev.filter(p => p.id !== id));
     setEnabled(prev => { const n=new Set(prev); n.delete(id); return n; });
-    if(editId===id) setEditId(null);
+    if(editId===id) { setEditId(null); setEditDraft({}); }
   };
 
   const addPayoff = () => {
@@ -1175,17 +1169,28 @@ function Payoffs({wide}) {
 
   const allTxns = [...checkTxns, ...ccTxns];
 
-  // Compute live balance and pct for a payoff from its keyword filter
+  // Compute live balance, progress, and time-to-payoff for a debt
   const getPayoffStats = (p) => {
     const orig = p.origBalance || p.balance || 0;
-    const kws = (p.keywords || "").split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
-    if (!kws.length || orig === 0) return { currentBalance: p.balance, pct: p.pct, paid: 0, auto: false };
+    const pmt  = parseFloat(p.payment) || 0;
+    const kws  = (p.keywords || "").split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
+    const mkDate = (mo) => {
+      if (mo === null) return "TBD";
+      if (mo <= 0) return "Paid off!";
+      const d = new Date(); d.setMonth(d.getMonth() + mo);
+      return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()] + " " + d.getFullYear();
+    };
+    if (!kws.length || orig === 0) {
+      const monthsLeft = (pmt > 0 && orig > 0) ? Math.ceil(orig / pmt) : null;
+      return { currentBalance: orig, pct: 0, paid: 0, auto: false, monthsLeft, payoffDate: mkDate(monthsLeft) };
+    }
     const paid = allTxns
       .filter(t => kws.some(kw => (t.desc || "").toLowerCase().includes(kw)))
       .reduce((s, t) => s + (t.amount > 0 ? t.amount : 0), 0);
     const currentBalance = Math.max(0, orig - paid);
-    const pct = Math.min(100, Math.round((paid / orig) * 100));
-    return { currentBalance, pct, paid, auto: true };
+    const pct = orig > 0 ? Math.min(100, Math.round((paid / orig) * 100)) : 0;
+    const monthsLeft = (pmt > 0 && currentBalance > 0) ? Math.ceil(currentBalance / pmt) : (currentBalance <= 0 ? 0 : null);
+    return { currentBalance, pct, paid, auto: true, monthsLeft, payoffDate: mkDate(monthsLeft) };
   };
 
   const totalRelief  = payoffs.filter(p=>enabled.has(p.id)).reduce((s,p)=>s+p.payment,0);
@@ -1255,7 +1260,7 @@ function Payoffs({wide}) {
         {payoffs.map(p => {
           const isOn   = enabled.has(p.id);
           const isEdit = editId === p.id;
-          const stats  = getPayoffStats(p);
+          const stats  = getPayoffStats(isEdit ? editDraft : p);
           return (
             <Card key={p.id} style={{opacity:isOn?1:0.6,transition:"opacity .2s",border:`1px solid ${isEdit?p.color+"66":BORDER}`}}>
               {/* Header row */}
@@ -1265,7 +1270,7 @@ function Payoffs({wide}) {
                     <span style={{fontSize:15,fontWeight:900,color:p.color}}>💳</span>
                   </div>
                   {isEdit
-                    ? <input value={p.name} onChange={e=>updateField(p.id,"name",e.target.value)}
+                    ? <input value={editDraft.name || ""} onChange={e=>setEditDraft(d=>({...d,name:e.target.value}))}
                         style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"5px 10px",color:TEXT,fontSize:16,fontWeight:700,width:140,outline:"none"}}/>
                     : <div>
                         <div style={{fontSize:15,fontWeight:700,color:TEXT}}>{p.name}</div>
@@ -1277,8 +1282,15 @@ function Payoffs({wide}) {
                   }
                 </div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                  {!isEdit && <Tag color={p.color}>{p.date}</Tag>}
-                  <button onClick={()=>setEditId(isEdit?null:p.id)} style={{
+                  {!isEdit && <Tag color={p.color}>{stats.payoffDate}</Tag>}
+                  <button onClick={() => {
+                    if (isEdit) {
+                      setPayoffs(prev => prev.map(q => q.id === p.id ? {...q, ...editDraft} : q));
+                      setEditId(null); setEditDraft({});
+                    } else {
+                      setEditId(p.id); setEditDraft({...p});
+                    }
+                  }} style={{
                     padding:"3px 9px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",
                     background:isEdit?p.color+"22":BORDER,color:isEdit?p.color:MUTED,
                     border:`1px solid ${isEdit?p.color:BORDER}`,transition:"all .15s",
@@ -1294,39 +1306,52 @@ function Payoffs({wide}) {
               {/* Edit mode fields */}
               {isEdit ? (
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
-                  <FieldInput label="Monthly Payment $" val={p.payment}
-                    onChange={v=>updateField(p.id,"payment",parseFloat(v)||0)} type="number" placeholder="460"/>
-                  <FieldInput label="Orig. Balance $" val={p.origBalance ?? p.balance}
-                    onChange={v=>{const n=parseFloat(v)||0; updateField(p.id,"origBalance",n); updateField(p.id,"balance",n);}} type="number" placeholder="12000"/>
-                  <FieldInput label="Payoff Date" val={p.date}
-                    onChange={v=>updateField(p.id,"date",v)} placeholder="Jul 2026"/>
-                  <FieldInput label="Time Remaining" val={p.months}
-                    onChange={v=>updateField(p.id,"months",v)} placeholder="5 left"/>
+                  <FieldInput label="Monthly Payment $" val={editDraft.payment ?? ""}
+                    onChange={v=>setEditDraft(d=>({...d,payment:parseFloat(v)||0}))} type="number" placeholder="460"/>
+                  <FieldInput label="Orig. Balance $" val={editDraft.origBalance ?? editDraft.balance ?? ""}
+                    onChange={v=>{const n=parseFloat(v)||0; setEditDraft(d=>({...d,origBalance:n,balance:n}));}} type="number" placeholder="12000"/>
                   <div style={{gridColumn:"1/-1"}}>
-                    <FieldInput label="Filter Keywords (comma-separated)" val={p.keywords || ""}
-                      onChange={v=>updateField(p.id,"keywords",v)} placeholder="car loan, capital one, auto pay"/>
-                    <div style={{fontSize:10,color:MUTED,marginTop:4}}>Transactions whose description contains any keyword count as payments. Leave blank to set progress manually.</div>
+                    <FieldInput label="Filter Keywords (comma-separated)" val={editDraft.keywords || ""}
+                      onChange={v=>setEditDraft(d=>({...d,keywords:v}))} placeholder="car loan, capital one, auto pay"/>
+                    <div style={{fontSize:10,color:MUTED,marginTop:4}}>Transactions whose description matches any keyword count as payments. Leave blank if no auto-tracking needed.</div>
                   </div>
-                  {(p.keywords || "").trim() ? (
-                    <div>
-                      <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>Progress %</div>
-                      <div style={{fontSize:13,color:p.color,fontWeight:700}}>{getPayoffStats(p).pct}% — auto from {getPayoffStats(p).paid > 0 ? fmt(getPayoffStats(p).paid)+" paid" : "transactions"}</div>
-                    </div>
-                  ) : (
-                    <div>
-                      <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>Progress % (manual)</div>
-                      <input type="range" min={0} max={100} value={p.pct}
-                        onChange={e=>updateField(p.id,"pct",parseInt(e.target.value))}
-                        style={{"--thumb":p.color,width:"100%"}}/>
-                      <div style={{fontSize:11,color:p.color,textAlign:"right"}}>{p.pct}%</div>
-                    </div>
-                  )}
+                  {/* Computed preview — updates live as draft fields change, chart updates on Done */}
+                  {(() => {
+                    const s = getPayoffStats(editDraft);
+                    const col = editDraft.color || p.color;
+                    return (
+                      <div style={{gridColumn:"1/-1",background:BG,borderRadius:8,padding:"10px 12px",border:`1px solid ${BORDER}`}}>
+                        <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:8}}>Computed</div>
+                        <div style={{display:"flex",gap:20,flexWrap:"wrap"}}>
+                          <div>
+                            <div style={{fontSize:10,color:MUTED,marginBottom:2}}>Current Balance</div>
+                            <div style={{fontSize:14,fontWeight:700,color:col}}>
+                              {fmt(s.currentBalance)}
+                              {s.auto && <span style={{marginLeft:5,fontSize:10,background:col+"22",color:col,borderRadius:4,padding:"1px 4px"}}>auto</span>}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:MUTED,marginBottom:2}}>Months Left</div>
+                            <div style={{fontSize:14,fontWeight:700,color:col}}>{s.monthsLeft !== null ? s.monthsLeft : "TBD"}</div>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:MUTED,marginBottom:2}}>Payoff Date</div>
+                            <div style={{fontSize:14,fontWeight:700,color:col}}>{s.payoffDate}</div>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:MUTED,marginBottom:2}}>Progress</div>
+                            <div style={{fontSize:14,fontWeight:700,color:col}}>{s.pct}%</div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <div>
                     <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:6}}>Color</div>
                     <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                       {PAYOFF_COLORS.map(c=>(
-                        <button key={c} onClick={()=>updateField(p.id,"color",c)} style={{
-                          width:20,height:20,borderRadius:5,background:c,border:`2px solid ${p.color===c?"white":"transparent"}`,
+                        <button key={c} onClick={()=>setEditDraft(d=>({...d,color:c}))} style={{
+                          width:20,height:20,borderRadius:5,background:c,border:`2px solid ${(editDraft.color||"")===c?"white":"transparent"}`,
                           cursor:"pointer",padding:0,flexShrink:0,
                         }}/>
                       ))}
@@ -1342,7 +1367,7 @@ function Payoffs({wide}) {
               ) : (
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                   <div style={{fontSize:24,fontWeight:900,color:p.color,fontVariantNumeric:"tabular-nums"}}>{fmt(p.payment)}/mo</div>
-                  <div style={{fontSize:12,color:MUTED}}>{p.months}</div>
+                  <div style={{fontSize:12,color:MUTED}}>{stats.monthsLeft !== null ? stats.monthsLeft + " mo left" : "TBD"}</div>
                 </div>
               )}
 
@@ -1363,15 +1388,6 @@ function Payoffs({wide}) {
               <FieldInput label="Name" val={newDebt.name} onChange={v=>setNewDebt(p=>({...p,name:v}))} placeholder="Car loan"/>
               <FieldInput label="Monthly Payment $" val={newDebt.payment} onChange={v=>setNewDebt(p=>({...p,payment:v}))} type="number" placeholder="250"/>
               <FieldInput label="Orig. Balance $" val={newDebt.balance} onChange={v=>setNewDebt(p=>({...p,balance:v}))} placeholder="12000"/>
-              <FieldInput label="Payoff Date" val={newDebt.date} onChange={v=>setNewDebt(p=>({...p,date:v}))} placeholder="Dec 2027"/>
-              <FieldInput label="Time Remaining" val={newDebt.months} onChange={v=>setNewDebt(p=>({...p,months:v}))} placeholder="22 left"/>
-              <div>
-                <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>Progress % (manual)</div>
-                <input type="range" min={0} max={100} value={newDebt.pct}
-                  onChange={e=>setNewDebt(p=>({...p,pct:parseInt(e.target.value)}))}
-                  style={{"--thumb":newDebt.color,width:"100%"}}/>
-                <div style={{fontSize:11,color:newDebt.color,textAlign:"right"}}>{newDebt.pct}%</div>
-              </div>
               <div>
                 <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:6}}>Color</div>
                 <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
@@ -1385,7 +1401,7 @@ function Payoffs({wide}) {
               </div>
               <div style={{gridColumn:"1/-1"}}>
                 <FieldInput label="Filter Keywords (comma-separated)" val={newDebt.keywords} onChange={v=>setNewDebt(p=>({...p,keywords:v}))} placeholder="car loan, capital one, auto pay"/>
-                <div style={{fontSize:10,color:MUTED,marginTop:4}}>Transactions matching these keywords auto-compute the progress bar. Leave blank to set manually.</div>
+                <div style={{fontSize:10,color:MUTED,marginTop:4}}>Transactions matching these keywords auto-compute balance and payoff date. Optional.</div>
               </div>
             </div>
             <div style={{display:"flex",gap:8}}>
@@ -2903,6 +2919,47 @@ function Trends({ wide, isMobile }) {
 }
 
 
+// ── EMOJI INPUT ──────────────────────────────────────────────────────────────
+const EMOJI_SUGGESTIONS = [
+  "📁","🏠","🚗","💳","🛒","🍳","💊","🧒","📺","✈️",
+  "🏥","⛽","🎓","💰","📱","🐾","🌱","🎮","🔧","📚",
+  "🎵","🛍️","☕","🐶","💼","🎯","🏦","🎁","🌍","🍕",
+  "🏋️","🎨","📷","🚀","❤️","💻","🎪","🎬","🍺","🌿",
+];
+function EmojiInput({ value, onChange, inputStyle }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const handler = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+  return (
+    <div ref={wrapRef} style={{position:"relative",display:"inline-block"}}>
+      <input value={value} onChange={e=>onChange(e.target.value)} onFocus={()=>setOpen(true)} style={inputStyle}/>
+      {open && (
+        <div style={{position:"absolute",zIndex:200,top:"calc(100% + 4px)",left:"50%",transform:"translateX(-50%)",
+          background:"#161b27",border:`1px solid ${BORDER}`,borderRadius:12,padding:8,
+          display:"grid",gridTemplateColumns:"repeat(8,1fr)",gap:1,width:244,
+          boxShadow:"0 8px 32px #00000099"}}>
+          {EMOJI_SUGGESTIONS.map(e=>(
+            <button key={e} onMouseDown={ev=>{ev.preventDefault();onChange(e);setOpen(false);}}
+              style={{background:value===e?"#ffffff18":"none",border:"none",fontSize:18,cursor:"pointer",
+                padding:"4px 2px",borderRadius:6,lineHeight:1,transition:"background .1s"}}>
+              {e}
+            </button>
+          ))}
+          <div style={{gridColumn:"1/-1",borderTop:`1px solid ${BORDER}`,paddingTop:6,marginTop:4,
+            fontSize:10,color:MUTED,textAlign:"center"}}>
+            or type / paste any emoji above
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── SETTINGS ────────────────────────────────────────────────────────────────
 function NewCatInput({ onAdd, allCats }) {
   const [val, setVal] = useState("");
@@ -2922,8 +2979,8 @@ function NewCatInput({ onAdd, allCats }) {
         <div style={{flex:1,fontSize:10,color:MUTED}}>Name</div>
       </div>
       <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-        <input value={icon} onChange={e=>setIcon(e.target.value)} placeholder="📁"
-          style={{width:40,background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"6px 4px",color:TEXT,fontSize:18,outline:"none",textAlign:"center"}}/>
+        <EmojiInput value={icon} onChange={setIcon}
+          inputStyle={{width:40,background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"6px 4px",color:TEXT,fontSize:18,outline:"none",textAlign:"center",cursor:"pointer"}}/>
         <input type="color" value={color} onChange={e=>setColor(e.target.value)}
           style={{width:40,height:36,background:"transparent",border:`1px solid ${BORDER}`,borderRadius:8,cursor:"pointer",padding:2,flexShrink:0}}/>
         <input value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}
