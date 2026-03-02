@@ -337,7 +337,7 @@ function CashFlowSankey({ viewMode }) {
 function Summary({wide, isMobile}) {
   const [view, setView] = useState("norm");
   const [expandedCat, setExpandedCat] = useState(null);
-  const { summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus, takeHome, selectedMonth } = useBudget();
+  const { summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus, takeHome, selectedMonth, dashName } = useBudget();
 
   // Merge all transactions for the expandable drill-down
   const ALL_TXNS = useMemo(() => [
@@ -366,7 +366,7 @@ function Summary({wide, isMobile}) {
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       <Card glow="#ef4444">
-        <Label>{selectedMonth} 2026 · Morrison Family</Label>
+        <Label>{selectedMonth} 2026 · {dashName}</Label>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:12,marginBottom:14}}>
           {[
             ["Take-Home",    fmt(takeHome),                  ACCENT],
@@ -2092,7 +2092,7 @@ function Recommendations({ wide, isMobile }) {
   const [recs, setRecs]         = useState(RECS);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshErr, setRefreshErr] = useState(null);
-  const { checkTxns, ccTxns, selectedMonth, normSurplus, payoffs, takeHome, groceryGoal } = useBudget();
+  const { checkTxns, ccTxns, selectedMonth, normSurplus, payoffs, takeHome, groceryGoal, dashName } = useBudget();
 
   const totalImpact = payoffs.reduce((s, p) => s + p.payment, 0);
 
@@ -2119,7 +2119,7 @@ function Recommendations({ wide, isMobile }) {
 
       const actualGroceries = byCat["Groceries"] || 0;
       const grocerySavings = Math.max(0, actualGroceries - groceryGoal).toFixed(0);
-      const prompt = `You are a personal finance advisor for the Morrison family (family of 5, Kansas City MO).
+      const prompt = `You are a personal finance advisor for ${dashName}.
 
 CURRENT SITUATION (${selectedMonth}):
 - Take-home pay: $${takeHome.toFixed(2)}/mo
@@ -2211,7 +2211,7 @@ Return ONLY a valid JSON array, no markdown, no explanation.`;
           ))}
         </div>
         <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.7 }}>
-          These recommendations are specific to the Morrison family budget. Hit "Refresh tips with AI" to regenerate based on your latest {selectedMonth} data.
+          These recommendations are specific to your {dashName} budget. Hit "Refresh tips with AI" to regenerate based on your latest {selectedMonth} data.
         </div>
       </Card>
 
@@ -2789,6 +2789,9 @@ function Settings({ isMobile }) {
     payoffs, setPayoffs,
     summaryRows,
     waterfallDisabled, setWaterfallDisabled,
+    dashName, setDashName,
+    showTithe, setShowTithe,
+    showABA,   setShowABA,
   } = useBudget();
 
   const [thInput, setThInput]     = useState(takeHome || "");
@@ -2815,7 +2818,7 @@ function Settings({ isMobile }) {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
-    a.download = `morrison-budget-${new Date().toISOString().slice(0,10)}.json`;
+    a.download = `${(dashName||"my-budget").toLowerCase().replace(/[^a-z0-9]+/g,"-")}-${new Date().toISOString().slice(0,10)}.json`;
     a.click(); URL.revokeObjectURL(url);
   };
 
@@ -2849,6 +2852,44 @@ function Settings({ isMobile }) {
   return (
     <div style={{padding: isMobile ? "16px 14px" : "24px 28px", maxWidth:680, margin:"0 auto"}}>
       <div style={{fontSize:20,fontWeight:900,color:accentSet,marginBottom:20}}>⚙️ Settings</div>
+
+      {/* Dashboard Name */}
+      <Card glow={accentSet}>
+        <Label>🏷️ Dashboard Name</Label>
+        <div style={{fontSize:12,color:MUTED,marginBottom:10}}>Shown in the header and sidebar. Use your family name, initials, or anything you like.</div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <input
+            value={dashName}
+            onChange={e => setDashName(e.target.value)}
+            placeholder="e.g. Smith Budget"
+            style={{flex:1,background:BG,border:`1px solid ${accentSet}`,borderRadius:8,padding:"8px 12px",color:TEXT,fontSize:15,outline:"none"}}
+          />
+        </div>
+      </Card>
+
+      {/* Feature Toggles */}
+      <Card glow="#7c6af7" style={{marginTop:16}}>
+        <Label>🔀 Feature Toggles</Label>
+        <div style={{fontSize:12,color:MUTED,marginBottom:14}}>Hide tabs and categories you don't need. Data for hidden categories is still tracked — it just won't appear in the nav or summary.</div>
+        {[
+          { key:"tithe", label:"Tithe Tracker", emoji:"⛪", desc:"Giving & Tithe category + Tithe tab", val:showTithe, set:setShowTithe },
+          { key:"aba",   label:"ABA Planner",   emoji:"🧩", desc:"ABA Therapy category + ABA tab",   val:showABA,   set:setShowABA   },
+        ].map(f => (
+          <div key={f.key} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderRadius:10,background:BG,border:`1px solid ${f.val?"#7c6af744":BORDER}`,marginBottom:8,opacity:f.val?1:0.6,transition:"all .15s"}}>
+            <span style={{fontSize:20}}>{f.emoji}</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:700,color:TEXT}}>{f.label}</div>
+              <div style={{fontSize:11,color:MUTED}}>{f.desc}</div>
+            </div>
+            <button onClick={() => f.set(v => !v)}
+              style={{padding:"5px 16px",borderRadius:8,fontSize:12,fontWeight:800,cursor:"pointer",transition:"all .15s",
+                background:f.val?"#7c6af722":BORDER, color:f.val?"#7c6af7":MUTED,
+                border:`1px solid ${f.val?"#7c6af755":BORDER}`}}>
+              {f.val ? "✓ On" : "Off"}
+            </button>
+          </div>
+        ))}
+      </Card>
 
       {/* API Key */}
       <Card glow="#818cf8">
@@ -3538,6 +3579,12 @@ export default function BudgetDashboardClean() {
   const [ccTxns, setCCTxns] = useState(() => {
     return ls.getJSON("budget_ccTxns", []);
   });
+
+  // Redirect away from tabs that have been toggled off
+  useEffect(() => {
+    if (!showTithe && page === "tithe") setPage("summary");
+    if (!showABA   && page === "aba")   setPage("summary");
+  }, [showTithe, showABA, page]);
   const [selectedMonth, setSelectedMonth] = useState("January");
 
   // Settings state — all persisted
@@ -3581,6 +3628,13 @@ export default function BudgetDashboardClean() {
   const [waterfallDisabled, setWaterfallDisabled] = useState(() => ls.getJSON("budget_wfDisabled", []));
   useEffect(() => { ls.setJSON("budget_wfDisabled", waterfallDisabled); }, [waterfallDisabled]);
   useEffect(() => { ls.setJSON("budget_payoffs", payoffs); }, [payoffs]);
+
+  const [dashName, setDashName] = useState(() => ls.get("budget_dashName") || "My Budget");
+  const [showTithe, setShowTithe] = useState(() => ls.get("budget_showTithe") !== "0");
+  const [showABA, setShowABA]   = useState(() => ls.get("budget_showABA")   !== "0");
+  useEffect(() => { ls.set("budget_dashName",  dashName); }, [dashName]);
+  useEffect(() => { ls.set("budget_showTithe", showTithe ? "1" : "0"); }, [showTithe]);
+  useEffect(() => { ls.set("budget_showABA",   showABA   ? "1" : "0"); }, [showABA]);
 
   const updateTxnCat = useCallback((src, id, newCat) => {
     if (src === "checking") setCheckTxns(prev => prev.map(t => t.id === id ? { ...t, cat: newCat } : t));
@@ -3634,18 +3688,24 @@ export default function BudgetDashboardClean() {
   }, []);
 
   // ── Derived summary rows — norm auto-computed from actual − one-times ──────
-  const summaryRows = useMemo(() => SUMMARY_ROWS.map(base => {
-    const checking = checkTxns
-      .filter(t => t.month === selectedMonth && t.cat === base.cat && t.cat !== "Transfer" && t.cat !== "Income")
-      .reduce((s, t) => s + t.amount, 0);
-    const cc = ccTxns
-      .filter(t => t.month === selectedMonth && t.cat === base.cat)
-      .reduce((s, t) => s + t.amount, 0);
-    const oneTimeAmt = oneTimes.filter(o => o.cat === base.cat).reduce((s, o) => s + o.amount, 0);
-    const norm = checking + cc - oneTimeAmt;
-    const kc = budgetKc[base.cat] !== undefined ? budgetKc[base.cat] : base.kc;
-    return { ...base, checking, cc, norm, kc };
-  }), [checkTxns, ccTxns, selectedMonth, oneTimes, budgetKc]);
+  const summaryRows = useMemo(() => SUMMARY_ROWS
+    .filter(base => {
+      if (base.cat === "Giving & Tithe" && !showTithe) return false;
+      if (base.cat === "ABA Therapy"    && !showABA)   return false;
+      return true;
+    })
+    .map(base => {
+      const checking = checkTxns
+        .filter(t => t.month === selectedMonth && t.cat === base.cat && t.cat !== "Transfer" && t.cat !== "Income")
+        .reduce((s, t) => s + t.amount, 0);
+      const cc = ccTxns
+        .filter(t => t.month === selectedMonth && t.cat === base.cat)
+        .reduce((s, t) => s + t.amount, 0);
+      const oneTimeAmt = oneTimes.filter(o => o.cat === base.cat).reduce((s, o) => s + o.amount, 0);
+      const norm = checking + cc - oneTimeAmt;
+      const kc = budgetKc[base.cat] !== undefined ? budgetKc[base.cat] : base.kc;
+      return { ...base, checking, cc, norm, kc };
+    }), [checkTxns, ccTxns, selectedMonth, oneTimes, budgetKc, showTithe, showABA]);
 
   const janActual   = summaryRows.reduce((s, r) => s + r.checking + r.cc, 0);
   const normTotal   = summaryRows.reduce((s, r) => s + r.norm, 0);
@@ -3662,6 +3722,9 @@ export default function BudgetDashboardClean() {
     budgetKc, setBudgetKc,
     t2CarryIn, setT2CarryIn,
     groceryGoal, setGroceryGoal,
+    dashName, setDashName,
+    showTithe, setShowTithe,
+    showABA,   setShowABA,
   };
 
   const pages = {
@@ -3678,6 +3741,18 @@ export default function BudgetDashboardClean() {
     cc:        <TxnTable src="cc"       isMobile={isMobile}/>,
     settings:  <Settings isMobile={isMobile}/>,
   };
+
+  const visibleNav = NAV.filter(n => {
+    if (n.id === "tithe" && !showTithe) return false;
+    if (n.id === "aba"   && !showABA)   return false;
+    return true;
+  });
+  const auditStart    = visibleNav.findIndex(n => n.id === "checking");
+  const dashboardNav  = visibleNav.slice(0, auditStart);
+  const auditNav      = visibleNav.slice(auditStart);
+  const mobileRow1Len = Math.ceil(visibleNav.length / 2);
+  const mobileRow1    = visibleNav.slice(0, mobileRow1Len);
+  const mobileRow2    = visibleNav.slice(mobileRow1Len);
 
   const gapBadge = (
     <div style={{background:"#ef444422",border:"1px solid #ef444444",borderRadius:12,padding:"8px 14px",textAlign:"center",flexShrink:0}}>
@@ -3708,8 +3783,8 @@ export default function BudgetDashboardClean() {
             {/* Row 1: title + compact gap */}
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",paddingLeft:14,paddingRight:14,marginBottom:8}}>
               <div>
-                <div style={{fontSize:17,fontWeight:900,color:ACCENT,lineHeight:1}}>Morrison Budget</div>
-                <div style={{fontSize:11,color:MUTED,marginTop:2}}>{selectedMonth} 2026 · {NAV.find(n=>n.id===page)?.label}</div>
+                <div style={{fontSize:17,fontWeight:900,color:ACCENT,lineHeight:1}}>{dashName}</div>
+                <div style={{fontSize:11,color:MUTED,marginTop:2}}>{selectedMonth} 2026 · {visibleNav.find(n=>n.id===page)?.label}</div>
               </div>
               {/* Compact gap badge */}
               <div style={{background:"#ef444422",border:"1px solid #ef444444",borderRadius:10,padding:"5px 10px",textAlign:"center",flexShrink:0}}>
@@ -3732,8 +3807,8 @@ export default function BudgetDashboardClean() {
           </div>
           <div style={{padding:"16px 14px 120px",flex:1}}>{pages[page]}</div>
           <div style={{position:"fixed",bottom:0,left:0,right:0,background:SURFACE+"f8",backdropFilter:"blur(24px)",borderTop:`1px solid ${BORDER}`,zIndex:100,paddingBottom:"max(env(safe-area-inset-bottom,0px),8px)"}}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", borderBottom: `1px solid ${BORDER}` }}>
-            {NAV.slice(0,6).map(n => { const a = page===n.id; return (
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${mobileRow1.length},1fr)`, borderBottom: `1px solid ${BORDER}` }}>
+            {mobileRow1.map(n => { const a = page===n.id; return (
               <button key={n.id} onClick={() => setPage(n.id)} style={{ padding:"9px 4px 7px", background:"transparent", display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
                 <span style={{ fontSize:16, opacity:a?1:.35 }}>{n.emoji}</span>
                 <span style={{ fontSize:8, fontWeight:a?800:500, color:a?ACCENT:MUTED }}>{n.label}</span>
@@ -3741,8 +3816,8 @@ export default function BudgetDashboardClean() {
               </button>
             ); })}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)" }}>
-            {NAV.slice(6).map(n => { const a = page===n.id; return (
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${mobileRow2.length},1fr)` }}>
+            {mobileRow2.map(n => { const a = page===n.id; return (
               <button key={n.id} onClick={() => setPage(n.id)} style={{ padding:"9px 4px 7px", background:"transparent", display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
                 <span style={{ fontSize:20, opacity:a?1:.35 }}>{n.emoji}</span>
                 <span style={{ fontSize:9, fontWeight:a?800:500, color:a?ACCENT:MUTED, textAlign:"center", lineHeight:1.2 }}>{n.label}</span>
@@ -3756,8 +3831,8 @@ export default function BudgetDashboardClean() {
         <div style={{display:"flex",width:"100%",minHeight:"100vh"}}>
           <div style={{width:240,background:"#0f141e",borderRight:`1px solid ${BORDER}`,display:"flex",flexDirection:"column",position:"sticky",top:0,height:"100vh",overflowY:"auto",flexShrink:0}}>
             <div style={{padding:"24px 20px 16px",borderBottom:`1px solid ${BORDER}`}}>
-              <div style={{fontSize:20,fontWeight:900,color:ACCENT}}>Morrison Budget</div>
-              <div style={{fontSize:12,color:MUTED,marginTop:3,marginBottom:12}}>Family · 2026</div>
+              <div style={{fontSize:20,fontWeight:900,color:ACCENT}}>{dashName}</div>
+              <div style={{fontSize:12,color:MUTED,marginTop:3,marginBottom:12}}>2026</div>
               {/* Month picker in sidebar */}
               <div style={{fontSize:10,color:DIM,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",marginBottom:6}}>Viewing Month</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
@@ -3773,13 +3848,13 @@ export default function BudgetDashboardClean() {
             </div>
             <nav style={{flex:1,padding:"12px 0"}}>
               <div style={{padding:"16px 20px 6px",fontSize:10,fontWeight:700,color:DIM,textTransform:"uppercase",letterSpacing:".6px"}}>Dashboard</div>
-              {NAV.slice(0,9).map(n=>{const a=page===n.id;return(
+              {dashboardNav.map(n=>{const a=page===n.id;return(
                 <button key={n.id} onClick={()=>setPage(n.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"10px 20px",background:a?ACCENT+"12":"transparent",borderLeft:`3px solid ${a?ACCENT:"transparent"}`,color:a?ACCENT:MUTED,fontSize:14,fontWeight:a?700:400,transition:"all .15s",textAlign:"left"}}>
                   <span style={{fontSize:17}}>{n.emoji}</span>{n.label}
                 </button>
               );})}
               <div style={{padding:"16px 20px 6px",fontSize:10,fontWeight:700,color:DIM,textTransform:"uppercase",letterSpacing:".6px"}}>Audit / Transactions</div>
-              {NAV.slice(9).map(n=>{const a=page===n.id;return(
+              {auditNav.map(n=>{const a=page===n.id;return(
                 <button key={n.id} onClick={()=>setPage(n.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"10px 20px",background:a?ACCENT+"12":"transparent",borderLeft:`3px solid ${a?ACCENT:"transparent"}`,color:a?ACCENT:MUTED,fontSize:14,fontWeight:a?700:400,transition:"all .15s",textAlign:"left"}}>
                   <span style={{fontSize:17}}>{n.emoji}</span>{n.label}
                 </button>
@@ -3798,8 +3873,8 @@ export default function BudgetDashboardClean() {
           <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",overflowY:"auto"}}>
             <div style={{borderBottom:`1px solid ${BORDER}`,padding:"16px 32px",display:"flex",alignItems:"center",justifyContent:"space-between",background:BG+"cc",backdropFilter:"blur(12px)",position:"sticky",top:0,zIndex:10}}>
               <div>
-                <div style={{fontSize:22,fontWeight:800,color:TEXT}}>{NAV.find(n=>n.id===page)?.label}</div>
-                <div style={{fontSize:12,color:MUTED,marginTop:2}}>{selectedMonth} 2026 · Morrison Family · Kansas City, MO</div>
+                <div style={{fontSize:22,fontWeight:800,color:TEXT}}>{visibleNav.find(n=>n.id===page)?.label}</div>
+                <div style={{fontSize:12,color:MUTED,marginTop:2}}>{selectedMonth} 2026 · {dashName}</div>
               </div>
               {gapBadge}
             </div>
