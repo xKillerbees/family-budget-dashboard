@@ -186,6 +186,8 @@ const Slider = ({min,max,step=10,value,onChange,color="#a78bfa"}) => (
 function CashFlowSankey({ viewMode }) {
   const [hovered, setHovered] = useState(null);
   const { summaryRows } = useBudget();
+  const width = useWindowWidth();
+  const isMobile = width < 768;
 
   const categories = summaryRows.map(r => ({
     name:  r.cat,
@@ -202,6 +204,11 @@ function CashFlowSankey({ viewMode }) {
   // ── Canvas ─────────────────────────────────────────────────────────────────
   const W = 1000, H = 680;
   const ff = "'DM Sans',system-ui,sans-serif";
+  const srcLabelFs = isMobile ? 18 : 11;
+  const srcValueFs = isMobile ? 30 : 18;
+  const srcPctFs = isMobile ? 16 : 10;
+  const destNameFs = isMobile ? 22 : 12;
+  const destMetaFs = isMobile ? 16 : 10;
   const pctStr = v => totalIncome > 0 ? `${((v / totalIncome) * 100).toFixed(1)}%` : "n/a";
   const NUM = allDest.length;
   const totalVal = allDest.reduce((s, d) => s + d.value, 0);
@@ -300,9 +307,9 @@ function CashFlowSankey({ viewMode }) {
 
         {/* Source bar on top */}
         <rect x={SRC_X} y={SRC_Y} width={SRC_W} height={SRC_H} rx={6} fill={ACCENT}/>
-        <text x={SRC_X+SRC_W+10} y={SRC_Y+20} fontFamily={ff} fill="#94a3b8" fontSize={11} fontWeight={700}>Paychecks</text>
-        <text x={SRC_X+SRC_W+10} y={SRC_Y+38} fontFamily={ff} fill={ACCENT} fontSize={18} fontWeight={900}>{fmt(totalIncome)}</text>
-        <text x={SRC_X+SRC_W+10} y={SRC_Y+54} fontFamily={ff} fill={MUTED} fontSize={10}>{totalIncome > 0 ? "100%" : "0%"}</text>
+        <text x={SRC_X+SRC_W+10} y={SRC_Y+20} fontFamily={ff} fill="#cbd5e1" fontSize={srcLabelFs} fontWeight={800}>Paychecks</text>
+        <text x={SRC_X+SRC_W+10} y={SRC_Y+(isMobile?52:38)} fontFamily={ff} fill={ACCENT} fontSize={srcValueFs} fontWeight={900}>{fmt(totalIncome)}</text>
+        <text x={SRC_X+SRC_W+10} y={SRC_Y+(isMobile?74:54)} fontFamily={ff} fill="#cbd5e1" fontSize={srcPctFs}>{totalIncome > 0 ? "100%" : "0%"}</text>
 
         {/* Dest nodes + labels */}
         {destNodes.map((d, i) => {
@@ -322,12 +329,12 @@ function CashFlowSankey({ viewMode }) {
                 fill={d.color} opacity={isH ? 1 : 0.85}
                 style={{ transition:"opacity .15s" }}/>
               <text x={LABEL_X} y={ly-5}
-                fontFamily={ff} fontSize={12} fontWeight={isH?700:500}
-                fill={isH ? d.color : TEXT}>
+                fontFamily={ff} fontSize={destNameFs} fontWeight={isH?800:700}
+                fill={isH ? d.color : "#e5e7eb"}>
                 {d.icon} {d.name}
               </text>
               <text x={LABEL_X} y={ly+10}
-                fontFamily={ff} fontSize={10} fill={isH ? d.color : MUTED}>
+                fontFamily={ff} fontSize={destMetaFs} fill={isH ? d.color : "#cbd5e1"}>
                 {fmt(d.value)} ({pctStr(d.value)})
               </text>
             </g>
@@ -459,7 +466,7 @@ function Summary({wide, isMobile}) {
                           <div style={{height:3,borderRadius:99,background:r.color+"22",overflow:"hidden"}}>
                             <div style={{height:"100%",width:`${targetPct}%`,background:r.color,borderRadius:99,transition:"width .4s"}}/>
                           </div>
-                          <div style={{fontSize:11,color:targetDelta >= 0 ? "#22c55e" : "#ef4444",marginTop:4,fontWeight:700,fontVariantNumeric:"tabular-nums"}}>
+                          <div style={{fontSize:11,color:targetDelta >= 0 ? "#22c55e" : "#ef4444",marginTop:4,fontWeight:700,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
                             {targetDelta >= 0 ? `${fmt(targetDelta)} remains` : `${fmt(Math.abs(targetDelta))} over`} ({Math.round((displayVal / r.kc) * 100)}%)
                           </div>
                         </div>
@@ -565,7 +572,7 @@ function Summary({wide, isMobile}) {
                       <div style={{textAlign:"right",fontSize:14,fontWeight:700,color:isOpen?r.color:TEXT,fontVariantNumeric:"tabular-nums"}}>
                         {displayVal === 0 ? "$0" : fmt(displayVal)}
                         {r.kc && (
-                          <div style={{fontSize:10,color:targetDelta >= 0 ? "#22c55e" : "#ef4444",fontWeight:700,marginTop:2}}>
+                          <div style={{fontSize:10,color:targetDelta >= 0 ? "#22c55e" : "#ef4444",fontWeight:700,marginTop:2,whiteSpace:"nowrap"}}>
                             {targetDelta >= 0 ? `${fmt(targetDelta)} remains` : `${fmt(Math.abs(targetDelta))} over`}
                           </div>
                         )}
@@ -993,10 +1000,10 @@ function Scenarios({ wide, isMobile }) {
                     return s.length > max ? `${s.slice(0, max - 1)}…` : s;
                   }}
                   interval={0}
-                  angle={waterfallSteps.length>8?-20:0}
-                  textAnchor={waterfallSteps.length>8?"end":"middle"}
-                  height={waterfallSteps.length>8?56:30}
-                  tickMargin={waterfallSteps.length>8?10:6}
+                  angle={0}
+                  textAnchor="middle"
+                  height={30}
+                  tickMargin={8}
                   minTickGap={6}
                 />
                 <YAxis tick={{fontSize:11,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(Math.abs(v)/1000).toFixed(0)}k`} width={52}/>
@@ -1238,6 +1245,8 @@ const FieldInput = ({label, val, onChange, type="text", placeholder=""}) => (
 
 function Payoffs({wide}) {
   const { payoffs, setPayoffs, normSurplus, checkTxns, ccTxns, selectedMonth } = useBudget();
+  const width = useWindowWidth();
+  const isCompactMobile = width < 460;
   const [enabled, setEnabled] = useState(() => {
     try {
       const s = ls.get("budget_payoffEnabled");
@@ -1379,8 +1388,8 @@ function Payoffs({wide}) {
           return (
             <Card key={p.id} style={{opacity:isOn?1:0.6,transition:"opacity .2s",border:`1px solid ${isEdit?p.color+"66":BORDER}`}}>
               {/* Header row */}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:isEdit?14:12,gap:8}}>
-                <div style={{display:"flex",alignItems:"center",gap:10,flex:1,minWidth:0}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:isEdit?14:12,gap:8,flexWrap:isCompactMobile?"wrap":"nowrap"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,flex:1,minWidth:0,flexBasis:isCompactMobile?"100%":"auto"}}>
                   <div style={{width:36,height:36,borderRadius:10,background:p.color+"22",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,position:"relative"}}>
                     {isEdit
                       ? <EmojiInput value={editDraft.icon || "💳"} onChange={v=>setEditDraft(d=>({...d,icon:v}))}
@@ -1396,7 +1405,7 @@ function Payoffs({wide}) {
                       </div>
                   }
                 </div>
-                <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0,flexWrap:"nowrap"}}>
+                 <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0,flexWrap:isCompactMobile?"wrap":"nowrap",width:isCompactMobile?"100%":"auto",paddingLeft:isCompactMobile?46:0}}>
                   {!isEdit && <Tag color={p.color}>{stats.payoffDate}</Tag>}
                   <button onClick={() => {
                     if (isEdit) {
@@ -1406,17 +1415,17 @@ function Payoffs({wide}) {
                       setEditId(p.id); setEditDraft({...p});
                     }
                   }} style={{
-                    padding:"3px 9px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",
+                    padding:isCompactMobile?"4px 8px":"3px 9px",borderRadius:8,fontSize:isCompactMobile?10:11,fontWeight:700,cursor:"pointer",
                     background:isEdit?p.color+"22":BORDER,color:isEdit?p.color:MUTED,
                     border:`1px solid ${isEdit?p.color:BORDER}`,transition:"all .15s",whiteSpace:"nowrap",
                   }}>{isEdit?"Done":"Edit"}</button>
                   <button onClick={()=>toggle(p.id)} style={{
-                    padding:"3px 9px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",
+                    padding:isCompactMobile?"4px 8px":"3px 9px",borderRadius:8,fontSize:isCompactMobile?10:11,fontWeight:700,cursor:"pointer",
                     background:isOn?p.color+"22":BORDER,color:isOn?p.color:MUTED,
                     border:`1px solid ${isOn?p.color:BORDER}`,transition:"all .15s",whiteSpace:"nowrap",
                   }}>{isOn?"✓":"Off"}</button>
                   <button onClick={()=>setAuditOpenId(isAudit ? null : p.id)} style={{
-                    padding:"3px 9px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",
+                    padding:isCompactMobile?"4px 8px":"3px 9px",borderRadius:8,fontSize:isCompactMobile?10:11,fontWeight:700,cursor:"pointer",
                     background:isAudit?p.color+"22":BORDER,color:isAudit?p.color:MUTED,
                     border:`1px solid ${isAudit?p.color:BORDER}`,transition:"all .15s",whiteSpace:"nowrap",
                   }}>Audit ({stats.matchedTxns.length})</button>
@@ -2320,7 +2329,7 @@ function TxnTable({ src, isMobile }) {
         </div>
       </Card>
 
-      <Card style={{padding:0,overflow:"hidden"}}>
+      <Card style={{padding:0,overflow:isMobile?"visible":"hidden"}}>
         {isMobile ? (
           /* ── MOBILE: card rows ── */
           <>
@@ -2352,7 +2361,7 @@ function TxnTable({ src, isMobile }) {
                             Options
                           </button>
                           {openMenuId === t.id && (
-                            <div style={{position:"absolute",right:0,top:26,zIndex:20,background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:8,padding:6,minWidth:132,display:"flex",flexDirection:"column",gap:4,boxShadow:"0 10px 22px #0008"}}>
+                            <div style={{position:"absolute",right:0,bottom:"calc(100% + 6px)",zIndex:60,background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:8,padding:6,minWidth:132,display:"flex",flexDirection:"column",gap:4,boxShadow:"0 10px 22px #0008"}}>
                               <button onClick={() => { editId===t.id ? saveEdit() : beginEdit(t); if (editId===t.id) setOpenMenuId(null); }}
                                 style={{background:"#22c55e15",border:"none",borderRadius:5,color:"#22c55e",fontSize:11,cursor:"pointer",padding:"5px 8px",textAlign:"left",fontWeight:700}}>
                                 {editId===t.id ? "Save edit" : "Edit"}
@@ -2655,7 +2664,9 @@ function MealPlanningPage({ wide }) {
   const [planDays, setPlanDays] = useState(() => Number(ls.get("budget_meal_days") || 7));
   const [mealStyle, setMealStyle] = useState(() => ls.get("budget_meal_style") || "family-friendly, balanced");
   const [storeText, setStoreText] = useState(() => ls.get("budget_meal_stores") || "Walmart, Aldi, Costco");
+  const [zipCode, setZipCode] = useState(() => ls.get("budget_meal_zip") || "");
   const [goalText, setGoalText] = useState(() => ls.get("budget_meal_goals") || "high protein dinners, simple lunches, low waste");
+  const [copyMsg, setCopyMsg] = useState("");
   const [generating, setGenerating] = useState(false);
   const [planErr, setPlanErr] = useState(null);
   const [aiPlanByMonth, setAiPlanByMonth] = useState(() => ls.getJSON("budget_meal_ai_plan_by_month", {}));
@@ -2667,6 +2678,7 @@ function MealPlanningPage({ wide }) {
   useEffect(() => { ls.set("budget_meal_days", String(planDays)); }, [planDays]);
   useEffect(() => { ls.set("budget_meal_style", mealStyle); }, [mealStyle]);
   useEffect(() => { ls.set("budget_meal_stores", storeText); }, [storeText]);
+  useEffect(() => { ls.set("budget_meal_zip", zipCode); }, [zipCode]);
   useEffect(() => { ls.set("budget_meal_goals", goalText); }, [goalText]);
   useEffect(() => { ls.setJSON("budget_meal_ai_plan_by_month", aiPlanByMonth); }, [aiPlanByMonth]);
   useEffect(() => { ls.setJSON("budget_meal_ai_responses_by_month", aiResponsesByMonth); }, [aiResponsesByMonth]);
@@ -2683,7 +2695,60 @@ function MealPlanningPage({ wide }) {
   const activeResponses = aiResponsesByMonth[selectedMonth] || [];
   const aiMonthlyEstimate = Number(activePlan?.estimated_monthly_total || 0);
   const aiDelta = plannedMonth - aiMonthlyEstimate;
+  const recipeCoveragePct = Math.round((((activePlan?.meals || []).filter(m => (m?.recipe_links?.breakfast || m?.recipe_links?.lunch || m?.recipe_links?.dinner)).length) / Math.max(1, (activePlan?.meals || []).length)) * 100);
 
+  const normalizeUrl = (u) => {
+    const s = String(u || "").trim();
+    if (!s) return "";
+    if (/^https?:\/\//i.test(s)) return s;
+    return `https://${s}`;
+  };
+  const fallbackProofLinks = (itemName, storeNames = []) => {
+    const q = encodeURIComponent(itemName || "grocery item");
+    const perStore = (storeNames || []).slice(0, 3).map(sn => `https://www.google.com/search?q=${encodeURIComponent(`${sn} ${itemName} price`)}`);
+    return [...perStore, `https://www.google.com/search?q=${q}+price`];
+  };
+  const normalizePlan = (parsed) => {
+    const meals = Array.isArray(parsed?.meals) ? parsed.meals.map((m) => ({
+      ...m,
+      recipe_links: {
+        breakfast: normalizeUrl(m?.recipe_links?.breakfast || ""),
+        lunch: normalizeUrl(m?.recipe_links?.lunch || ""),
+        dinner: normalizeUrl(m?.recipe_links?.dinner || ""),
+      },
+    })) : [];
+    const grocery_items = Array.isArray(parsed?.grocery_items) ? parsed.grocery_items.map((it) => {
+      const sc = it?.store_costs && typeof it.store_costs === "object" ? it.store_costs : {};
+      const links = Array.isArray(it?.price_proof_links)
+        ? it.price_proof_links.map(normalizeUrl).filter(Boolean)
+        : [];
+      return {
+        ...it,
+        store_costs: sc,
+        image_url: normalizeUrl(it?.image_url || ""),
+        price_proof_links: links.length ? links : fallbackProofLinks(it?.item, Object.keys(sc)),
+      };
+    }) : [];
+    return {
+      ...parsed,
+      generated_at: parsed?.generated_at || new Date().toISOString(),
+      meals,
+      grocery_items,
+    };
+  };
+  const copyShoppingList = async () => {
+    const aiItems = (activePlan?.grocery_items || []).map(it => `- ${it.item}${it.quantity ? ` (${it.quantity})` : ""}${it.best_store ? ` [Best: ${it.best_store}${it.best_cost!=null ? ` ${fmt(it.best_cost)}` : ""}]` : ""}`);
+    const txt = [...aiItems].join("\n").trim();
+    if (!txt) return;
+    try {
+      await navigator.clipboard.writeText(txt);
+      setCopyMsg("Copied shopping list");
+      setTimeout(() => setCopyMsg(""), 1800);
+    } catch {
+      setCopyMsg("Copy failed");
+      setTimeout(() => setCopyMsg(""), 1800);
+    }
+  };
   const generatePlan = async () => {
     if (!ANTHROPIC_API_KEY) { setPlanErr("Add an Anthropic API key in Settings to use AI meal planning."); return; }
     setGenerating(true);
@@ -2693,6 +2758,7 @@ function MealPlanningPage({ wide }) {
 Month: ${selectedMonth}
 Household size: ${householdSize}
 Planning days: ${planDays}
+ZIP code: ${zipCode || "Not provided"}
 Weekly budget target: $${weeklyBudget}
 Monthly budget target: $${plannedMonth.toFixed(2)}
 Current groceries + dining spend this month: $${total.toFixed(2)}
@@ -2708,15 +2774,19 @@ Hard constraints:
 2) If the target is tight, reduce complexity and choose lower-cost ingredients first.
 3) Prioritize reusing ingredients across meals to cut waste and stay under budget.
 4) Include concise substitutions for expensive items.
+5) Every day must include recipe links for breakfast/lunch/dinner.
+6) Every grocery item must include an image_url and at least one price_proof_links URL to show where the price came from.
+7) Prefer store-specific proof links close to the ZIP code when possible.
 
 Return ONLY valid JSON with this shape:
 {
   "summary": "short summary",
+  "generated_at": "ISO timestamp",
   "estimated_weekly_total": number,
   "estimated_monthly_total": number,
-  "meals": [{"day":"Mon","breakfast":"...","lunch":"...","dinner":"..."}],
+  "meals": [{"day":"Mon","breakfast":"...","lunch":"...","dinner":"...","recipe_links":{"breakfast":"https://...","lunch":"https://...","dinner":"https://..."}}],
   "grocery_items": [
-    {"item":"Chicken breast","quantity":"4 lb","category":"Protein","store_costs":{"Walmart":14.5,"Aldi":13.2},"best_store":"Aldi","best_cost":13.2,"meal_usage":"2 dinners + 1 lunch"}
+    {"item":"Chicken breast","quantity":"4 lb","category":"Protein","store_costs":{"Walmart":14.5,"Aldi":13.2},"best_store":"Aldi","best_cost":13.2,"meal_usage":"2 dinners + 1 lunch","image_url":"https://...","price_proof_links":["https://...","https://..."]}
   ],
   "prep_tips": ["..."],
   "waste_reduction_tips": ["..."]
@@ -2729,7 +2799,7 @@ Return ONLY valid JSON with this shape:
       });
       const data = await res.json();
       const raw = data.content?.[0]?.text || "";
-      const parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
+      const parsed = normalizePlan(JSON.parse(raw.replace(/```json|```/g,"").trim()));
       setAiPlanByMonth(prev => ({ ...prev, [selectedMonth]: parsed }));
       setAiResponsesByMonth(prev => ({
         ...prev,
@@ -2761,6 +2831,12 @@ Return ONLY valid JSON with this shape:
             </div>
           ))}
         </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
+          <Tag color="#06b6d4">ZIP: {zipCode || "not set"}</Tag>
+          <Tag color="#a78bfa">Stores: {stores.length || 0}</Tag>
+          <Tag color="#22c55e">Recipe links: {recipeCoveragePct}%</Tag>
+          {activePlan?.generated_at && <Tag color="#f59e0b">Last AI plan: {new Date(activePlan.generated_at).toLocaleDateString()}</Tag>}
+        </div>
       </Card>
 
       <Card>
@@ -2789,7 +2865,7 @@ Return ONLY valid JSON with this shape:
 
       <Card>
         <Label>AI Grocery + Meal Plan</Label>
-        <div style={{fontSize:12,color:MUTED,marginBottom:10}}>Generates a weekly meal plan, grocery list, and estimated item costs by selected stores using AI estimates.</div>
+        <div style={{fontSize:12,color:MUTED,marginBottom:10}}>Generates weekly meals, recipe links, grocery images, and source links proving estimated prices by store.</div>
         <div style={{display:"grid",gridTemplateColumns:wide?"repeat(2,1fr)":"1fr",gap:10}}>
           <div>
             <div style={{fontSize:11,color:MUTED,marginBottom:4}}>Weekly budget</div>
@@ -2806,6 +2882,10 @@ Return ONLY valid JSON with this shape:
           <div>
             <div style={{fontSize:11,color:MUTED,marginBottom:4}}>Stores</div>
             <input value={storeText} onChange={e=>setStoreText(e.target.value)} placeholder="Walmart, Aldi, Costco" style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 10px",color:TEXT,fontSize:13,width:"100%"}}/>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:MUTED,marginBottom:4}}>ZIP code (for local price context)</div>
+            <input value={zipCode} onChange={e=>setZipCode(e.target.value.replace(/[^\d-]/g, "").slice(0, 10))} placeholder="e.g. 73120" style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 10px",color:TEXT,fontSize:13,width:"100%"}}/>
           </div>
           <div>
             <div style={{fontSize:11,color:MUTED,marginBottom:4}}>Meal style</div>
@@ -2849,29 +2929,59 @@ Return ONLY valid JSON with this shape:
             {(activePlan.meals || []).length===0 ? <div style={{fontSize:12,color:MUTED}}>No meals returned.</div> : (activePlan.meals || []).map((m,i)=>(
               <div key={i} style={{display:"grid",gridTemplateColumns:wide?"90px 1fr 1fr 1fr":"1fr",gap:8,padding:"8px 2px",borderBottom:`1px solid ${i===activePlan.meals.length-1?"transparent":BORDER}`}}>
                 <div style={{fontSize:12,fontWeight:700,color:ACCENT}}>{m.day || `Day ${i+1}`}</div>
-                <div style={{fontSize:12,color:TEXT}}><strong style={{color:MUTED}}>Breakfast:</strong> {m.breakfast || "-"}</div>
-                <div style={{fontSize:12,color:TEXT}}><strong style={{color:MUTED}}>Lunch:</strong> {m.lunch || "-"}</div>
-                <div style={{fontSize:12,color:TEXT}}><strong style={{color:MUTED}}>Dinner:</strong> {m.dinner || "-"}</div>
+                <div style={{fontSize:12,color:TEXT}}>
+                  <strong style={{color:MUTED}}>Breakfast:</strong> {m.breakfast || "-"}
+                  {m?.recipe_links?.breakfast && <a href={m.recipe_links.breakfast} target="_blank" rel="noreferrer" style={{marginLeft:6,color:"#22c55e",fontSize:11}}>Recipe</a>}
+                </div>
+                <div style={{fontSize:12,color:TEXT}}>
+                  <strong style={{color:MUTED}}>Lunch:</strong> {m.lunch || "-"}
+                  {m?.recipe_links?.lunch && <a href={m.recipe_links.lunch} target="_blank" rel="noreferrer" style={{marginLeft:6,color:"#22c55e",fontSize:11}}>Recipe</a>}
+                </div>
+                <div style={{fontSize:12,color:TEXT}}>
+                  <strong style={{color:MUTED}}>Dinner:</strong> {m.dinner || "-"}
+                  {m?.recipe_links?.dinner && <a href={m.recipe_links.dinner} target="_blank" rel="noreferrer" style={{marginLeft:6,color:"#22c55e",fontSize:11}}>Recipe</a>}
+                </div>
               </div>
             ))}
           </Card>
 
           <Card>
             <Label>Grocery List + Store Cost Estimates</Label>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+              <div style={{fontSize:11,color:MUTED}}>Each item includes price proof links and an image URL when available.</div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <button onClick={copyShoppingList} style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${BORDER}`,background:BG,color:TEXT,fontSize:11,cursor:"pointer"}}>Copy shopping list</button>
+                {copyMsg && <span style={{fontSize:11,color:"#22c55e"}}>{copyMsg}</span>}
+              </div>
+            </div>
             {(activePlan.grocery_items || []).length===0 ? <div style={{fontSize:12,color:MUTED}}>No grocery list returned.</div> : (activePlan.grocery_items || []).map((it,i)=>(
-              <div key={i} style={{padding:"9px 2px",borderBottom:`1px solid ${i===activePlan.grocery_items.length-1?"transparent":BORDER}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
-                  <div>
+              <div key={i} style={{padding:"10px 2px",borderBottom:`1px solid ${i===activePlan.grocery_items.length-1?"transparent":BORDER}`}}>
+                <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                  {it.image_url ? (
+                    <a href={it.image_url} target="_blank" rel="noreferrer" style={{display:"inline-flex",flexShrink:0}}>
+                      <img src={it.image_url} alt={it.item || "grocery item"} style={{width:54,height:54,objectFit:"cover",borderRadius:8,border:`1px solid ${BORDER}`,background:BG}}/>
+                    </a>
+                  ) : <div style={{width:54,height:54,borderRadius:8,border:`1px solid ${BORDER}`,background:BG,flexShrink:0}}/>}
+                  <div style={{minWidth:0,flex:1}}>
                     <div style={{fontSize:13,fontWeight:700,color:TEXT}}>{it.item} <span style={{fontSize:11,color:MUTED,fontWeight:400}}>({it.quantity || "qty n/a"})</span></div>
-                    <div style={{fontSize:11,color:MUTED}}>{it.category || "General"} · {it.meal_usage || ""}</div>
+                    <div style={{fontSize:11,color:MUTED,marginTop:2}}>{it.category || "General"} · {it.meal_usage || ""}</div>
+                    <div style={{fontSize:12,color:"#22c55e",fontWeight:800,marginTop:4}}>Best: {it.best_store || "n/a"} {it.best_cost!=null ? fmt(it.best_cost) : ""}</div>
                   </div>
-                  <div style={{fontSize:12,color:"#22c55e",fontWeight:800}}>Best: {it.best_store || "n/a"} {it.best_cost!=null ? fmt(it.best_cost) : ""}</div>
                 </div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
                   {Object.entries(it.store_costs || {}).map(([sn,sv])=>(
                     <span key={sn} style={{fontSize:11,color:MUTED,background:BG,border:`1px solid ${BORDER}`,borderRadius:999,padding:"2px 8px"}}>{sn}: {typeof sv === "number" ? fmt(sv) : sv}</span>
                   ))}
                 </div>
+                {!!(it.price_proof_links || []).length && (
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+                    {(it.price_proof_links || []).slice(0,4).map((lnk, idx)=>(
+                      <a key={idx} href={lnk} target="_blank" rel="noreferrer" style={{fontSize:11,color:"#06b6d4",textDecoration:"none",background:"#06b6d411",border:"1px solid #06b6d433",borderRadius:999,padding:"2px 8px"}}>
+                        Price proof {idx+1}
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </Card>
@@ -5254,7 +5364,8 @@ const NAV = [
   { id:"settings",     label:"Settings",     emoji:"\u{2699}\u{FE0F}" },
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
-const APP_VERSION = "0.1.4";
+const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
+const APP_VERSION = "0.1.5";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
@@ -5607,9 +5718,9 @@ export default function BudgetDashboardClean() {
           <div style={{padding:"16px 14px 120px",flex:1}}>
             {pages[page]}
             <div style={{marginTop:18,textAlign:"center"}}>
-              <a href={PAGES_URL} target="_blank" rel="noreferrer" style={{fontSize:11,color:DIM,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
+              <a href={REPO_URL} target="_blank" rel="noreferrer" style={{fontSize:11,color:DIM,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
                 <span aria-hidden="true">🐙</span>
-                <span>Open on GitHub Pages</span>
+                <span>Open on GitHub Repo</span>
               </a>
             </div>
           </div>
@@ -5676,9 +5787,9 @@ export default function BudgetDashboardClean() {
                 </div>
               ))}
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${BORDER}`}}>
-                <a href={PAGES_URL} target="_blank" rel="noreferrer" style={{fontSize:11,color:DIM,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
+                <a href={REPO_URL} target="_blank" rel="noreferrer" style={{fontSize:11,color:DIM,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
                   <span aria-hidden="true">🐙</span>
-                  <span>Open on GitHub Pages</span>
+                  <span>Open on GitHub Repo</span>
                 </a>
                 <div style={{fontSize:10,color:DIM,marginTop:6}}>v{APP_VERSION}</div>
               </div>

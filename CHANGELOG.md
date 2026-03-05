@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.5] - 2026-03-05
+
+### Added
+- Meals AI planner now supports ZIP code context for location-aware price estimates.
+- Meals AI output contract now includes recipe links per meal slot plus grocery `image_url` and price-proof links.
+- Meals header now shows quick context chips (ZIP, store count, recipe-link coverage, last generated date).
+- Grocery list now supports one-click copy/export from generated AI items.
+
+### Changed
+- “Open on GitHub Pages” footer links now point to the GitHub repository and are relabeled as `Open on GitHub Repo`.
+- Scenario waterfall x-axis labels are centered to bar columns for cleaner alignment.
+- Payoffs mobile debt-card headers now wrap and compact action controls on narrow screens.
+
+### Fixed
+- Summary target delta text (`remains` / `over`) no longer wraps onto a second line.
+- Mobile transaction Options menu no longer gets clipped; it opens above the trigger with higher z-index.
+- Sankey text readability improved on mobile with larger, higher-contrast labels/values.
+- Meals grocery list layout dead-space reduced by using a compact left-aligned item layout.
+
 ## [0.1.4] - 2026-03-05
 
 ### Added
