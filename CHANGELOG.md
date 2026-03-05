@@ -14,6 +14,9 @@ All notable changes to this project are documented in this file.
 - Settings footer version badge now correctly displays `v0.1.9` to match the package/build version.
 - Meal-plan normalization now stamps `generated_at` at save time, avoiding stale model-provided dates in UI tags/history.
 - Meal-plan normalization now auto-corrects clearly inconsistent monthly estimates from AI output using the weekly estimate baseline (`weekly * 4.33`).
+- Meal-plan JSON parsing now attempts structured recovery from truncated AI output by salvaging balanced `meals` and `grocery_items` arrays.
+- Meal-plan generation/repair passes now use higher token budgets and surface truncation-specific errors more reliably.
+- Income page now treats `Income` category values as inflow magnitude for monthly totals, source rollups, and trend bars, preventing backward/negative charting for credit-style imports.
 
 ## [0.1.8] - 2026-03-05
 

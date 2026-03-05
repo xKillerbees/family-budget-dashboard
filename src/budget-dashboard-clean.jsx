@@ -2594,6 +2594,7 @@ function TransactionsPage({ isMobile }) {
 function IncomePage({ wide }) {
   const { checkTxns, ccTxns, selectedMonth, availableMonths, takeHome } = useBudget();
   const allIncomeTxns = [...checkTxns, ...ccTxns].filter(t => t.cat === "Income");
+  const incomeInflow = (t) => Math.abs(Number(t?.amount) || 0);
   const hasRealIncome = allIncomeTxns.length > 0;
   const demoBase = takeHome > 0 ? takeHome : 7862;
   const demoMonthIncomeTxns = [
@@ -2604,12 +2605,12 @@ function IncomePage({ wide }) {
   const monthIncomeTxns = hasRealIncome
     ? allIncomeTxns.filter(t => t.month === selectedMonth)
     : demoMonthIncomeTxns;
-  const monthIncome = monthIncomeTxns.reduce((s,t)=>s+t.amount,0);
-  const sourceRows = Object.entries(monthIncomeTxns.reduce((acc,t)=>{ acc[t.desc]=(acc[t.desc]||0)+t.amount; return acc; }, {}))
+  const monthIncome = monthIncomeTxns.reduce((s,t)=>s+incomeInflow(t),0);
+  const sourceRows = Object.entries(monthIncomeTxns.reduce((acc,t)=>{ acc[t.desc]=(acc[t.desc]||0)+incomeInflow(t); return acc; }, {}))
     .map(([name,total])=>({name,total})).sort((a,b)=>b.total-a.total);
   const monthSeries = hasRealIncome
     ? availableMonths.map(m => {
-        const total = allIncomeTxns.filter(t => t.month === m).reduce((s,t)=>s+t.amount,0);
+        const total = allIncomeTxns.filter(t => t.month === m).reduce((s,t)=>s+incomeInflow(t),0);
         return { month: m.slice(0,3), total };
       })
     : APP_MONTHS.map((m, idx) => ({ month: m.slice(0,3), total: Math.round(demoBase * (0.94 + ((idx % 4) * 0.03))) }));
@@ -2819,6 +2820,84 @@ function MealPlanningPage({ wide }) {
         try { return JSON.parse(cleaned); } catch {}
         try { return JSON.parse(cleaned.replace(/,\s*([}\]])/g, "$1")); } catch {}
       }
+
+      const findKeyValueStart = (text, key) => {
+        const needle = `"${key}"`;
+        let idx = text.indexOf(needle);
+        while (idx >= 0) {
+          let i = idx + needle.length;
+          while (i < text.length && /\s/.test(text[i])) i += 1;
+          if (text[i] !== ":") {
+            idx = text.indexOf(needle, idx + 1);
+            continue;
+          }
+          i += 1;
+          while (i < text.length && /\s/.test(text[i])) i += 1;
+          return i;
+        }
+        return -1;
+      };
+      const extractBalancedFrom = (text, start, openCh, closeCh) => {
+        if (start < 0 || text[start] !== openCh) return null;
+        let depth = 0;
+        let inStr = false;
+        let esc = false;
+        for (let i = start; i < text.length; i++) {
+          const ch = text[i];
+          if (inStr) {
+            if (esc) esc = false;
+            else if (ch === "\\") esc = true;
+            else if (ch === "\"") inStr = false;
+            continue;
+          }
+          if (ch === "\"") { inStr = true; continue; }
+          if (ch === openCh) depth += 1;
+          else if (ch === closeCh) {
+            depth -= 1;
+            if (depth === 0) return text.slice(start, i + 1);
+          }
+        }
+        return null;
+      };
+      const parseStringProp = (text, key) => {
+        const m = text.match(new RegExp(`"${key}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`));
+        if (!m) return "";
+        try { return JSON.parse(`"${m[1]}"`); } catch { return m[1]; }
+      };
+      const parseNumberProp = (text, key) => {
+        const m = text.match(new RegExp(`"${key}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`));
+        if (!m) return 0;
+        const n = Number(m[1]);
+        return Number.isFinite(n) ? n : 0;
+      };
+      const parseArrayProp = (text, key) => {
+        const start = findKeyValueStart(text, key);
+        const arrText = extractBalancedFrom(text, start, "[", "]");
+        if (!arrText) return [];
+        try {
+          const parsed = JSON.parse(arrText);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      };
+      const recovered = (() => {
+        const meals = parseArrayProp(unfenced, "meals");
+        const grocery_items = parseArrayProp(unfenced, "grocery_items");
+        if (!meals.length && !grocery_items.length) return null;
+        return {
+          summary: parseStringProp(unfenced, "summary") || "Recovered AI meal plan from partial response.",
+          generated_at: parseStringProp(unfenced, "generated_at") || new Date().toISOString(),
+          estimated_weekly_total: parseNumberProp(unfenced, "estimated_weekly_total"),
+          estimated_monthly_total: parseNumberProp(unfenced, "estimated_monthly_total"),
+          meals,
+          grocery_items,
+          prep_tips: parseArrayProp(unfenced, "prep_tips"),
+          waste_reduction_tips: parseArrayProp(unfenced, "waste_reduction_tips"),
+        };
+      })();
+      if (recovered) return recovered;
+
       throw new Error("AI response was not valid JSON.");
     };
     const callAnthropic = async (userPrompt, maxTokens = 3000) => {
@@ -2834,6 +2913,16 @@ function MealPlanningPage({ wide }) {
       }
       const raw = (data.content || []).map(b => b?.text || "").join("\n").trim();
       return { raw, stopReason: data?.stop_reason || "" };
+    };
+    const parseResponseOrThrow = (response, label) => {
+      try {
+        return parseAiJson(response?.raw || "");
+      } catch (err) {
+        if (String(response?.stopReason || "").toLowerCase() === "max_tokens") {
+          throw new Error(`${label} was truncated (max tokens).`);
+        }
+        throw err;
+      }
     };
     try {
       const prompt = `Create a practical grocery meal plan JSON for a US household.
@@ -2859,6 +2948,7 @@ Hard constraints:
 5) Every day must include recipe links for breakfast/lunch/dinner.
 6) Every grocery item must include at least one price_proof_links URL to show where the price came from.
 7) Prefer store-specific proof links close to the ZIP code when possible.
+8) Keep output compact: use at most 20 grocery items and at most 4 tips in each tips array.
 
 Return ONLY valid JSON with this shape:
 {
@@ -2875,15 +2965,13 @@ Return ONLY valid JSON with this shape:
 }`;
       promptUsed = prompt;
 
-      const { raw, stopReason } = await callAnthropic(prompt, 4200);
+      const initial = await callAnthropic(prompt, 5200);
+      const { raw } = initial;
       debugResponses.push({ label: "raw_model_response", text: raw });
       let parsedJson;
       let responseToSave = raw;
       try {
-        if (stopReason === "max_tokens") {
-          throw new Error("AI response was truncated (max tokens).");
-        }
-        parsedJson = parseAiJson(raw);
+        parsedJson = parseResponseOrThrow(initial, "AI response");
       } catch {
         const repairPrompt = `You are a strict JSON formatter.
 Convert the following text into strict valid JSON only.
@@ -2892,10 +2980,10 @@ If any field is unknown, use empty strings/arrays instead of omitting keys.
 
 TEXT TO REPAIR:
 ${raw}`;
-        const repairedPass1 = await callAnthropic(repairPrompt, 2600);
+        const repairedPass1 = await callAnthropic(repairPrompt, 5200);
         debugResponses.push({ label: "repair_pass_1", text: repairedPass1.raw });
         try {
-          parsedJson = parseAiJson(repairedPass1.raw);
+          parsedJson = parseResponseOrThrow(repairedPass1, "AI repair pass 1");
           responseToSave = repairedPass1.raw;
         } catch {
           const repairPrompt2 = `Return ONLY minified strict JSON object that matches the expected meal-plan schema keys.
@@ -2903,9 +2991,9 @@ No prose. No markdown.
 
 RAW INPUT:
 ${raw}`;
-          const repairedPass2 = await callAnthropic(repairPrompt2, 2600);
+          const repairedPass2 = await callAnthropic(repairPrompt2, 5200);
           debugResponses.push({ label: "repair_pass_2", text: repairedPass2.raw });
-          parsedJson = parseAiJson(repairedPass2.raw);
+          parsedJson = parseResponseOrThrow(repairedPass2, "AI repair pass 2");
           responseToSave = repairedPass2.raw;
         }
       }
@@ -5532,6 +5620,12 @@ function deriveTxnMonth(t) {
   if (fromDate) return fromDate;
   return normalizeMonthName(t?.month) || "January";
 }
+function latestMonthFromTxns(checkTxns = [], ccTxns = []) {
+  const all = [...checkTxns, ...ccTxns].map(t => deriveTxnMonth(t)).filter(Boolean);
+  const unique = [...new Set(all)];
+  const months = APP_MONTHS.filter(m => unique.includes(m));
+  return months.length ? months[months.length - 1] : "January";
+}
 
 // ── APP ───────────────────────────────────────────────────────────────────────
 export default function BudgetDashboardClean() {
@@ -5549,7 +5643,10 @@ export default function BudgetDashboardClean() {
     return ls.getJSON("budget_ccTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), excludeFromTags: !!t.excludeFromTags }));
   });
 
-  const [selectedMonth, setSelectedMonth] = useState("January");
+  const [selectedMonth, setSelectedMonth] = useState(() => latestMonthFromTxns(
+    ls.getJSON("budget_checkTxns", []),
+    ls.getJSON("budget_ccTxns", []),
+  ));
 
   // Settings state — all persisted
   const [takeHome, setTakeHome] = useState(() => {
@@ -5590,7 +5687,7 @@ export default function BudgetDashboardClean() {
     return months.length ? months : ["January"];
   }, [checkTxns, ccTxns]);
   useEffect(() => {
-    if (!availableMonths.includes(selectedMonth)) setSelectedMonth(availableMonths[0]);
+    if (!availableMonths.includes(selectedMonth)) setSelectedMonth(availableMonths[availableMonths.length - 1] || "January");
   }, [availableMonths, selectedMonth]);
 
   const [payoffs, setPayoffs] = useState(() => {
