@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.11] - 2026-03-05
+
+### Added
+- Readability controls in Settings for desktop large-text mode and UI scale presets (`100%`, `110%`, `120%`, `130%`) with local persistence.
+- Year selector buttons (mobile + desktop) above month selection, driven from years present in imported transactions.
+
+### Changed
+- Desktop layout now uses a fixed app-shell with internal content scrolling so the top header remains pinned while page content scrolls.
+- Header content was simplified to remove duplicated dashboard/month text and keep primary page context + gap/status chips.
+- Transactions source toggle (`Checking` / `Credit Card`) was restyled into a clearer segmented control with stronger active-state contrast.
+- Import section copy was fully rewritten to clearly explain the real CSV/PDF + AI flow, including optional CSV AI categorization and optional PDF AI extraction fallback.
+
+### Fixed
+- Transactions white-screen regression caused by an invalid hook dependency reference in the transaction table delete handler.
+- Transactions desktop table layout no longer collapses at larger readability scales.
+- Summary category breakdown layout now adapts better at larger readability scales with fluid desktop column sizing and reduced overlap.
+- Meal-plan link normalization now validates and repairs invalid recipe/price-proof links more safely.
+- Grocery list rendering was upgraded to a structured table including explicit meal-usage mapping.
+
 ## [0.1.10] - 2026-03-05
 
 ### Fixed

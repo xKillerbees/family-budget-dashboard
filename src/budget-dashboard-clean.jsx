@@ -353,7 +353,7 @@ function CashFlowSankey({ viewMode }) {
 function Summary({wide, isMobile}) {
   const [view, setView] = useState("actual");
   const [expandedCat, setExpandedCat] = useState(null);
-  const { summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus, takeHome, selectedMonth, dashName, oneTimes, hideZeroSummaryCats } = useBudget();
+  const { summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus, takeHome, selectedMonth, oneTimes, hideZeroSummaryCats } = useBudget();
 
   // Merge all transactions for the expandable drill-down
   const ALL_TXNS = useMemo(() => [
@@ -382,10 +382,11 @@ function Summary({wide, isMobile}) {
   const breakdownRows = hideZeroSummaryCats
     ? sortedSummaryRows.filter(r => (view==="norm" ? r.norm : (r.checking + r.cc)) !== 0)
     : sortedSummaryRows;
+  const summaryCols = "26px minmax(0,1.85fr) minmax(0,0.75fr) minmax(0,0.55fr) minmax(0,1.25fr) minmax(72px,0.95fr)";
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       <Card glow="#ef4444">
-        <Label>{selectedMonth} 2026 · {dashName}</Label>
+        <Label>{selectedMonth} Snapshot</Label>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:12,marginBottom:14}}>
           {[
             ["Take-Home",    fmt(takeHome),                  ACCENT],
@@ -538,119 +539,123 @@ function Summary({wide, isMobile}) {
           ) : (
             /* ── DESKTOP: full 6-col table ── */
             <>
-              <div style={{display:"grid",gridTemplateColumns:"28px 1fr 70px 70px 80px 80px",gap:0,padding:"9px 14px",background:BG,borderBottom:`1px solid ${BORDER}`}}>
-                {["","Category","Checking","CC",view==="norm"?"Normalized":"Actual","KC Avg"].map((h,i)=>(
-                  <div key={i} style={{fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:".4px",textAlign:i>1?"right":"left"}}>{h}</div>
-                ))}
-              </div>
-              {breakdownRows.map((r,i)=>{
-                const displayVal = view==="norm" ? r.norm : (r.checking+r.cc);
-                const over = r.kc && displayVal > r.kc;
-                const targetDelta = r.kc ? (r.kc - displayVal) : null;
-                const targetPct = r.kc > 0 ? Math.min((displayVal / r.kc) * 100, 100) : 0;
-                const isOpen = expandedCat === r.cat;
-                const txns = txnsFor(r.cat);
-                return (
-                  <div key={r.cat}>
-                    {/* Main row — clickable */}
-                    <div onClick={()=>setExpandedCat(isOpen?null:r.cat)}
-                      style={{display:"grid",gridTemplateColumns:"28px 1fr 70px 70px 80px 80px",gap:0,padding:"10px 14px",
-                        borderBottom:`1px solid ${isOpen?r.color+"44":BORDER}`,
-                        background:isOpen?r.color+"0d":i%2===0?SURFACE:BG,
-                        alignItems:"center",cursor:"pointer",transition:"background .15s"}}>
-                      <span style={{fontSize:16}}>{r.icon}</span>
-                      <div style={{display:"flex",alignItems:"center",gap:8}}>
-                        <div style={{display:"flex",flexDirection:"column",gap:4,flex:1,minWidth:0}}>
-                          <div style={{fontSize:13,fontWeight:isOpen?700:500,color:isOpen?r.color:TEXT}}>{r.cat}</div>
-                          {r.kc && <PBar pct={targetPct} color={r.color} h={2}/>}
-                        </div>
-                        {r.oneTime>0&&view==="actual"&&<Tag color="#f59e0b">−{fmt(r.oneTime)} one-time</Tag>}
-                        <span style={{fontSize:10,color:isOpen?r.color:MUTED,marginLeft:"auto",transition:"transform .2s",display:"inline-block",transform:isOpen?"rotate(180deg)":"none"}}>▾</span>
-                      </div>
-                      <div style={{textAlign:"right",fontSize:12,color:r.checking>0?"#94a3b8":DIM,fontVariantNumeric:"tabular-nums"}}>{r.checking>0?fmt(r.checking):"—"}</div>
-                      <div style={{textAlign:"right",fontSize:12,color:r.cc>0?"#94a3b8":DIM,fontVariantNumeric:"tabular-nums"}}>{r.cc>0?fmt(r.cc):"—"}</div>
-                      <div style={{textAlign:"right",fontSize:14,fontWeight:700,color:isOpen?r.color:TEXT,fontVariantNumeric:"tabular-nums"}}>
-                        {displayVal === 0 ? "$0" : fmt(displayVal)}
-                        {r.kc && (
-                          <div style={{fontSize:10,color:targetDelta >= 0 ? "#22c55e" : "#ef4444",fontWeight:700,marginTop:2,whiteSpace:"nowrap"}}>
-                            {targetDelta >= 0 ? `${fmt(targetDelta)} remains` : `${fmt(Math.abs(targetDelta))} over`}
-                          </div>
-                        )}
-                      </div>
-                      <div style={{textAlign:"right"}}>{r.kc?<Tag color={over?"#ef4444":"#22c55e"}>{fmt(r.kc)}</Tag>:<span style={{color:DIM,fontSize:12}}>—</span>}</div>
-                    </div>
-                    {/* Expanded transaction list — split Checking / CC */}
-                    {isOpen && (()=>{
-                      const chkTxns = txns.filter(t => t.id?.startsWith("c") && !t.id?.startsWith("cc"));
-                      const ccTxnList = txns.filter(t => t.id?.startsWith("cc"));
-                      const TxnRows = ({list, accent}) => list.length === 0
-                        ? <div style={{padding:"8px 14px 8px 42px",fontSize:12,color:DIM,fontStyle:"italic"}}>No transactions</div>
-                        : list.map((t,j) => (
-                          <div key={j} style={{display:"grid",gridTemplateColumns:"50px 1fr 90px",padding:"8px 14px 8px 42px",
-                            borderBottom:`1px solid ${r.color}12`,background:j%2===0?"transparent":r.color+"06",alignItems:"center"}}>
-                            <div style={{fontSize:11,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{t.date}</div>
-                            <div>
-                              <div style={{fontSize:12,color:TEXT}}>{t.desc}</div>
-                              {t.note&&!t.note.includes("ONE-TIME")&&<div style={{fontSize:10,color:DIM,marginTop:1}}>{t.note}</div>}
-                              {t.note?.includes("ONE-TIME")&&<Tag color="#f59e0b">one-time</Tag>}
-                            </div>
-                            <div style={{textAlign:"right",fontSize:13,fontWeight:700,
-                              color:t.amount<0?"#22c55e":TEXT,fontVariantNumeric:"tabular-nums"}}>
-                              {t.amount<0?"+":""}{fmt(t.amount)}
-                            </div>
-                          </div>
-                        ));
-                      const SectionHeader = ({label, total, accent, count}) => (
-                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-                          padding:"6px 14px 6px 42px",background:accent+"18",borderBottom:`1px solid ${accent}33`}}>
-                          <div style={{display:"flex",alignItems:"center",gap:8}}>
-                            <span style={{fontSize:11,fontWeight:800,color:accent,textTransform:"uppercase",letterSpacing:".5px"}}>{label}</span>
-                            <span style={{fontSize:10,color:accent,opacity:.7}}>{count} txn{count!==1?"s":""}</span>
-                          </div>
-                          <span style={{fontSize:13,fontWeight:800,color:accent,fontVariantNumeric:"tabular-nums"}}>{fmt(total)}</span>
-                        </div>
-                      );
-                      return (
-                        <div style={{background:r.color+"07",borderBottom:`2px solid ${r.color}33`}}>
-                          {/* Checking section */}
-                          <SectionHeader label="🏦 Checking" accent="#3b82f6"
-                            count={chkTxns.length}
-                            total={chkTxns.reduce((s,t)=>s+t.amount,0)}/>
-                          <TxnRows list={chkTxns} accent="#3b82f6"/>
-                          {/* CC section */}
-                          <SectionHeader label="💳 Credit Card" accent="#6366f1"
-                            count={ccTxnList.length}
-                            total={ccTxnList.reduce((s,t)=>s+t.amount,0)}/>
-                          <TxnRows list={ccTxnList} accent="#6366f1"/>
-                          {/* Combined footer */}
-                          <div style={{display:"flex",justifyContent:"space-between",padding:"9px 14px 9px 42px",
-                            borderTop:`1px solid ${r.color}22`}}>
-                            <span style={{fontSize:12,fontWeight:700,color:r.color}}>{txns.length} total transactions</span>
-                            <span style={{fontSize:13,fontWeight:900,color:r.color,fontVariantNumeric:"tabular-nums"}}>
-                              {fmt(txns.reduce((s,t)=>s+t.amount,0))}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                );
-              })}
-              <div style={{display:"grid",gridTemplateColumns:"28px 1fr 70px 70px 80px 80px",gap:0,padding:"11px 14px",borderTop:`2px solid ${BORDER}`,background:BG}}>
-                <div/><div style={{fontSize:13,fontWeight:800,color:MUTED}}>Total</div>
-                <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{fmt(checkTotal)}</div>
-                <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{fmt(ccTotal)}</div>
-                <div style={{textAlign:"right",fontSize:14,fontWeight:900,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{fmt(view==="norm"?normTotal:janActual)}</div>
-                <div/>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"28px 1fr 70px 70px 80px 80px",gap:0,padding:"11px 14px",background:BG}}>
-                <div/><div style={{fontSize:13,fontWeight:800,color:normSurplus<0?"#ef4444":"#22c55e"}}>vs Take-Home</div>
-                <div/><div/>
-                <div style={{textAlign:"right",fontSize:14,fontWeight:900,color:normSurplus<0?"#ef4444":"#22c55e",fontVariantNumeric:"tabular-nums"}}>
-                  {normSurplus<0?"−":"+"}{fmt(Math.abs(view==="norm"?normSurplus:takeHome-janActual))}
+                <div style={{display:"grid",gridTemplateColumns:summaryCols,columnGap:6,padding:"9px 12px",background:BG,borderBottom:`1px solid ${BORDER}`}}>
+                  {["","Category","Checking","CC",view==="norm"?"Normalized":"Actual","KC Avg"].map((h,i)=>(
+                    <div key={i} style={{fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:".4px",textAlign:i>1?"right":"left"}}>{h}</div>
+                  ))}
                 </div>
-                <div/>
-              </div>
+                {breakdownRows.map((r,i)=>{
+                  const displayVal = view==="norm" ? r.norm : (r.checking+r.cc);
+                  const over = r.kc && displayVal > r.kc;
+                  const targetDelta = r.kc ? (r.kc - displayVal) : null;
+                  const targetPct = r.kc > 0 ? Math.min((displayVal / r.kc) * 100, 100) : 0;
+                  const isOpen = expandedCat === r.cat;
+                  const txns = txnsFor(r.cat);
+                  return (
+                    <div key={r.cat}>
+                      {/* Main row — clickable */}
+                      <div onClick={()=>setExpandedCat(isOpen?null:r.cat)}
+                        style={{display:"grid",gridTemplateColumns:summaryCols,columnGap:6,padding:"10px 12px",
+                          borderBottom:`1px solid ${isOpen?r.color+"44":BORDER}`,
+                          background:isOpen?r.color+"0d":i%2===0?SURFACE:BG,
+                          alignItems:"center",cursor:"pointer",transition:"background .15s"}}>
+                        <span style={{fontSize:16}}>{r.icon}</span>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <div style={{display:"flex",flexDirection:"column",gap:4,flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:isOpen?700:500,color:isOpen?r.color:TEXT}}>{r.cat}</div>
+                            {r.kc && (
+                              <div style={{width:"72%",maxWidth:150,minWidth:90}}>
+                                <PBar pct={targetPct} color={r.color} h={2}/>
+                              </div>
+                            )}
+                          </div>
+                          {r.oneTime>0&&view==="actual"&&<Tag color="#f59e0b">−{fmt(r.oneTime)} one-time</Tag>}
+                          <span style={{fontSize:10,color:isOpen?r.color:MUTED,marginLeft:"auto",transition:"transform .2s",display:"inline-block",transform:isOpen?"rotate(180deg)":"none"}}>▾</span>
+                        </div>
+                        <div style={{textAlign:"right",fontSize:12,color:r.checking>0?"#94a3b8":DIM,fontVariantNumeric:"tabular-nums"}}>{r.checking>0?fmt(r.checking):"—"}</div>
+                        <div style={{textAlign:"right",fontSize:12,color:r.cc>0?"#94a3b8":DIM,fontVariantNumeric:"tabular-nums"}}>{r.cc>0?fmt(r.cc):"—"}</div>
+                        <div style={{textAlign:"right",fontSize:14,fontWeight:700,color:isOpen?r.color:TEXT,fontVariantNumeric:"tabular-nums"}}>
+                          {displayVal === 0 ? "$0" : fmt(displayVal)}
+                          {r.kc && (
+                            <div style={{fontSize:10,color:targetDelta >= 0 ? "#22c55e" : "#ef4444",fontWeight:700,marginTop:2,whiteSpace:"nowrap"}}>
+                              {targetDelta >= 0 ? `${fmt(targetDelta)} remains` : `${fmt(Math.abs(targetDelta))} over`}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{textAlign:"right"}}>{r.kc?<Tag color={over?"#ef4444":"#22c55e"}>{fmt(r.kc)}</Tag>:<span style={{color:DIM,fontSize:12}}>—</span>}</div>
+                      </div>
+                      {/* Expanded transaction list — split Checking / CC */}
+                      {isOpen && (()=>{
+                        const chkTxns = txns.filter(t => t.id?.startsWith("c") && !t.id?.startsWith("cc"));
+                        const ccTxnList = txns.filter(t => t.id?.startsWith("cc"));
+                        const TxnRows = ({list, accent}) => list.length === 0
+                          ? <div style={{padding:"8px 14px 8px 42px",fontSize:12,color:DIM,fontStyle:"italic"}}>No transactions</div>
+                          : list.map((t,j) => (
+                            <div key={j} style={{display:"grid",gridTemplateColumns:"50px 1fr 90px",padding:"8px 14px 8px 42px",
+                              borderBottom:`1px solid ${r.color}12`,background:j%2===0?"transparent":r.color+"06",alignItems:"center"}}>
+                              <div style={{fontSize:11,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{t.date}</div>
+                              <div>
+                                <div style={{fontSize:12,color:TEXT}}>{t.desc}</div>
+                                {t.note&&!t.note.includes("ONE-TIME")&&<div style={{fontSize:10,color:DIM,marginTop:1}}>{t.note}</div>}
+                                {t.note?.includes("ONE-TIME")&&<Tag color="#f59e0b">one-time</Tag>}
+                              </div>
+                              <div style={{textAlign:"right",fontSize:13,fontWeight:700,
+                                color:t.amount<0?"#22c55e":TEXT,fontVariantNumeric:"tabular-nums"}}>
+                                {t.amount<0?"+":""}{fmt(t.amount)}
+                              </div>
+                            </div>
+                          ));
+                        const SectionHeader = ({label, total, accent, count}) => (
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                            padding:"6px 14px 6px 42px",background:accent+"18",borderBottom:`1px solid ${accent}33`}}>
+                            <div style={{display:"flex",alignItems:"center",gap:8}}>
+                              <span style={{fontSize:11,fontWeight:800,color:accent,textTransform:"uppercase",letterSpacing:".5px"}}>{label}</span>
+                              <span style={{fontSize:10,color:accent,opacity:.7}}>{count} txn{count!==1?"s":""}</span>
+                            </div>
+                            <span style={{fontSize:13,fontWeight:800,color:accent,fontVariantNumeric:"tabular-nums"}}>{fmt(total)}</span>
+                          </div>
+                        );
+                        return (
+                          <div style={{background:r.color+"07",borderBottom:`2px solid ${r.color}33`}}>
+                            {/* Checking section */}
+                            <SectionHeader label="🏦 Checking" accent="#3b82f6"
+                              count={chkTxns.length}
+                              total={chkTxns.reduce((s,t)=>s+t.amount,0)}/>
+                            <TxnRows list={chkTxns} accent="#3b82f6"/>
+                            {/* CC section */}
+                            <SectionHeader label="💳 Credit Card" accent="#6366f1"
+                              count={ccTxnList.length}
+                              total={ccTxnList.reduce((s,t)=>s+t.amount,0)}/>
+                            <TxnRows list={ccTxnList} accent="#6366f1"/>
+                            {/* Combined footer */}
+                            <div style={{display:"flex",justifyContent:"space-between",padding:"9px 14px 9px 42px",
+                              borderTop:`1px solid ${r.color}22`}}>
+                              <span style={{fontSize:12,fontWeight:700,color:r.color}}>{txns.length} total transactions</span>
+                              <span style={{fontSize:13,fontWeight:900,color:r.color,fontVariantNumeric:"tabular-nums"}}>
+                                {fmt(txns.reduce((s,t)=>s+t.amount,0))}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  );
+                })}
+                <div style={{display:"grid",gridTemplateColumns:summaryCols,columnGap:6,padding:"11px 12px",borderTop:`2px solid ${BORDER}`,background:BG}}>
+                  <div/><div style={{fontSize:13,fontWeight:800,color:MUTED}}>Total</div>
+                  <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{fmt(checkTotal)}</div>
+                  <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{fmt(ccTotal)}</div>
+                  <div style={{textAlign:"right",fontSize:14,fontWeight:900,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{fmt(view==="norm"?normTotal:janActual)}</div>
+                  <div/>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:summaryCols,columnGap:6,padding:"11px 12px",background:BG}}>
+                  <div/><div style={{fontSize:13,fontWeight:800,color:normSurplus<0?"#ef4444":"#22c55e"}}>vs Take-Home</div>
+                  <div/><div/>
+                  <div style={{textAlign:"right",fontSize:14,fontWeight:900,color:normSurplus<0?"#ef4444":"#22c55e",fontVariantNumeric:"tabular-nums"}}>
+                    {normSurplus<0?"−":"+"}{fmt(Math.abs(view==="norm"?normSurplus:takeHome-janActual))}
+                  </div>
+                  <div/>
+                </div>
             </>
           )}
         </Card>
@@ -2082,6 +2087,8 @@ function TxnTable({ src, isMobile }) {
   const [sortBy,      setSortBy]      = useState("date_desc");
   const [openMenuId,  setOpenMenuId]  = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const desktopTxnCols = "70px minmax(220px,1fr) 130px 180px 220px 70px";
+  const desktopTxnMinW = 980;
   const money2 = useCallback((n) => new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
@@ -2473,88 +2480,89 @@ function TxnTable({ src, isMobile }) {
         ) : (
           /* ── DESKTOP: 4-col table ── */
           <>
-            <div style={{display:"grid",gridTemplateColumns:"60px 1fr 110px 170px 170px 60px",padding:"10px 16px",background:BG,borderBottom:`1px solid ${BORDER}`}}>
-              {["Date","Description","Amount","Category","",""].map(h=>(
-                <div key={h} style={{fontSize:11,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:".5px"}}>{h}</div>
-              ))}
-            </div>
-            {filtered.map((t,i)=>{
-              const isIncome=t.cat==="Income", isTransfer=t.cat==="Transfer", isReturn=t.amount<0;
-              const isOneTime=isOneTimeTxn(t);
-              const catColor=catColorsAll[t.cat]||MUTED;
-              const isEditing = editId === t.id;
-              return (
-                <div key={i} style={{display:"grid",gridTemplateColumns:"60px 1fr 110px 170px 170px 60px",padding:"10px 16px",borderBottom:`1px solid ${BORDER}`,background:isIncome?"#22c55e07":isTransfer?"#33415507":i%2===0?SURFACE:BG,opacity:isTransfer?.5:1}}>
-                  <div style={{fontSize:12,color:MUTED,alignSelf:"center"}}>
-                    {isEditing
-                      ? <input value={editDraft.date} onChange={e=>setEditDraft(d=>({...d,date:e.target.value}))} placeholder="MM/DD"
-                          style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
-                      : t.date}
-                  </div>
-                  <div style={{alignSelf:"center",paddingRight:12}}>
-                    {isEditing ? (
-                      <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                        <input value={editDraft.desc} onChange={e=>setEditDraft(d=>({...d,desc:e.target.value}))}
-                          style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
-                        <input value={editDraft.note} onChange={e=>setEditDraft(d=>({...d,note:e.target.value}))} placeholder="Note (optional)"
-                          style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:11,outline:"none"}}/>
-                      </div>
-                    ) : (
-                      <>
-                        <div style={{fontSize:13,color:isIncome?"#22c55e":TEXT,fontWeight:isIncome?700:400,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                          {t.desc}{isOneTime&&<Tag color="#f59e0b">one-time</Tag>}
-                          {t.excludeFromTags&&<Tag color="#f59e0b">excluded</Tag>}
+            <div style={{overflowX:"auto"}}>
+              <div style={{display:"grid",gridTemplateColumns:desktopTxnCols,columnGap:10,padding:"10px 16px",background:BG,borderBottom:`1px solid ${BORDER}`,minWidth:desktopTxnMinW}}>
+                {["Date","Description","Amount","Category","",""].map(h=>(
+                  <div key={h} style={{fontSize:11,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:".5px"}}>{h}</div>
+                ))}
+              </div>
+              {filtered.map((t,i)=>{
+                const isIncome=t.cat==="Income", isTransfer=t.cat==="Transfer", isReturn=t.amount<0;
+                const isOneTime=isOneTimeTxn(t);
+                const isEditing = editId === t.id;
+                return (
+                  <div key={i} style={{display:"grid",gridTemplateColumns:desktopTxnCols,columnGap:10,padding:"10px 16px",borderBottom:`1px solid ${BORDER}`,background:isIncome?"#22c55e07":isTransfer?"#33415507":i%2===0?SURFACE:BG,opacity:isTransfer?.5:1,minWidth:desktopTxnMinW}}>
+                    <div style={{fontSize:12,color:MUTED,alignSelf:"center"}}>
+                      {isEditing
+                        ? <input value={editDraft.date} onChange={e=>setEditDraft(d=>({...d,date:e.target.value}))} placeholder="MM/DD"
+                            style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
+                        : t.date}
+                    </div>
+                    <div style={{alignSelf:"center",paddingRight:12}}>
+                      {isEditing ? (
+                        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                          <input value={editDraft.desc} onChange={e=>setEditDraft(d=>({...d,desc:e.target.value}))}
+                            style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
+                          <input value={editDraft.note} onChange={e=>setEditDraft(d=>({...d,note:e.target.value}))} placeholder="Note (optional)"
+                            style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:11,outline:"none"}}/>
                         </div>
-                        {t.note&&!t.note.includes("ONE-TIME")&&<div style={{fontSize:11,color:DIM,marginTop:2}}>{t.note}</div>}
-                      </>
-                    )}
-                  </div>
-                  <div style={{fontSize:14,fontWeight:700,alignSelf:"center",fontVariantNumeric:"tabular-nums",color:isIncome?"#22c55e":isReturn?"#22c55e":isTransfer?MUTED:TEXT}}>
-                    {isEditing
-                      ? <input type="number" step="0.01" value={editDraft.amount} onChange={e=>setEditDraft(d=>({...d,amount:e.target.value}))}
-                          style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
-                      : <>{isIncome||isReturn?"+":""}{money2(t.amount)}</>}
-                  </div>
-                  <div style={{alignSelf:"center"}}><CatSelect t={t} src={src} updateTxnCat={updateTxnCat}/></div>
-                  <div style={{alignSelf:"center",display:"flex",gap:5,justifyContent:"flex-start",whiteSpace:"nowrap",flexWrap:"wrap"}}>
-                    <button onClick={() => isEditing ? saveEdit() : beginEdit(t)} title="Edit"
-                      style={{background:"#22c55e15",border:"none",borderRadius:4,color:"#22c55e",fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>
-                      {isEditing ? "Save" : "Edit"}
-                    </button>
-                    {!isIncome && !isTransfer && (
-                      <button onClick={() => setSplitTxn(t)} title="Split transaction"
-                        style={{background:"#06b6d415",border:"none",borderRadius:4,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>Split</button>
-                    )}
-                    {!isEditing && (
-                      <button onClick={() => toggleTxnTagging(src, t.id)} title={t.excludeFromTags ? "Include in tagging" : "Exclude from tagging"}
-                        style={{background:t.excludeFromTags?"#f59e0b22":"#33415522",border:"none",borderRadius:4,color:t.excludeFromTags?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>
-                        {t.excludeFromTags ? "NoTag" : "Tag"}
+                      ) : (
+                        <>
+                          <div style={{fontSize:13,color:isIncome?"#22c55e":TEXT,fontWeight:isIncome?700:400,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                            {t.desc}{isOneTime&&<Tag color="#f59e0b">one-time</Tag>}
+                            {t.excludeFromTags&&<Tag color="#f59e0b">excluded</Tag>}
+                          </div>
+                          {t.note&&!t.note.includes("ONE-TIME")&&<div style={{fontSize:11,color:DIM,marginTop:2}}>{t.note}</div>}
+                        </>
+                      )}
+                    </div>
+                    <div style={{fontSize:14,fontWeight:700,alignSelf:"center",fontVariantNumeric:"tabular-nums",color:isIncome?"#22c55e":isReturn?"#22c55e":isTransfer?MUTED:TEXT}}>
+                      {isEditing
+                        ? <input type="number" step="0.01" value={editDraft.amount} onChange={e=>setEditDraft(d=>({...d,amount:e.target.value}))}
+                            style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
+                        : <>{isIncome||isReturn?"+":""}{money2(t.amount)}</>}
+                    </div>
+                    <div style={{alignSelf:"center"}}><CatSelect t={t} src={src} updateTxnCat={updateTxnCat}/></div>
+                    <div style={{alignSelf:"center",display:"flex",gap:5,justifyContent:"flex-start",whiteSpace:"nowrap",flexWrap:"wrap"}}>
+                      <button onClick={() => isEditing ? saveEdit() : beginEdit(t)} title="Edit"
+                        style={{background:"#22c55e15",border:"none",borderRadius:4,color:"#22c55e",fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>
+                        {isEditing ? "Save" : "Edit"}
                       </button>
-                    )}
-                    {!isIncome && !isTransfer && !isEditing && (
-                      <button onClick={() => toggleOneTimeTxn(t)} title={isOneTime ? "Unmark one-time" : "Mark one-time"}
-                        style={{background:isOneTime?"#f59e0b22":"#33415522",border:"none",borderRadius:4,color:isOneTime?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>
-                        One-time
-                      </button>
-                    )}
+                      {!isIncome && !isTransfer && (
+                        <button onClick={() => setSplitTxn(t)} title="Split transaction"
+                          style={{background:"#06b6d415",border:"none",borderRadius:4,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>Split</button>
+                      )}
+                      {!isEditing && (
+                        <button onClick={() => toggleTxnTagging(src, t.id)} title={t.excludeFromTags ? "Include in tagging" : "Exclude from tagging"}
+                          style={{background:t.excludeFromTags?"#f59e0b22":"#33415522",border:"none",borderRadius:4,color:t.excludeFromTags?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>
+                          {t.excludeFromTags ? "NoTag" : "Tag"}
+                        </button>
+                      )}
+                      {!isIncome && !isTransfer && !isEditing && (
+                        <button onClick={() => toggleOneTimeTxn(t)} title={isOneTime ? "Unmark one-time" : "Mark one-time"}
+                          style={{background:isOneTime?"#f59e0b22":"#33415522",border:"none",borderRadius:4,color:isOneTime?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>
+                          One-time
+                        </button>
+                      )}
+                    </div>
+                    <div style={{alignSelf:"center"}}>
+                      {isEditing ? (
+                        <button onClick={cancelEdit} title="Cancel edit"
+                          style={{background:"#33415522",border:"none",borderRadius:4,color:MUTED,fontSize:11,cursor:"pointer",padding:"2px 6px",lineHeight:1.5,fontWeight:700}}>Cancel</button>
+                      ) : (
+                        <button onClick={() => requestDeleteTxn(t)} title="Delete"
+                          style={{background:"#ef444415",border:"none",borderRadius:4,color:"#ef4444",fontSize:13,cursor:"pointer",padding:"2px 6px",lineHeight:1.5}}>Del</button>
+                      )}
+                    </div>
                   </div>
-                  <div style={{alignSelf:"center"}}>
-                    {isEditing ? (
-                      <button onClick={cancelEdit} title="Cancel edit"
-                        style={{background:"#33415522",border:"none",borderRadius:4,color:MUTED,fontSize:11,cursor:"pointer",padding:"2px 6px",lineHeight:1.5,fontWeight:700}}>Cancel</button>
-                    ) : (
-                      <button onClick={() => requestDeleteTxn(t)} title="Delete"
-                        style={{background:"#ef444415",border:"none",borderRadius:4,color:"#ef4444",fontSize:13,cursor:"pointer",padding:"2px 6px",lineHeight:1.5}}>Del</button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-            <div style={{display:"grid",gridTemplateColumns:"60px 1fr 110px 170px 170px 60px",padding:"12px 16px",background:"#0f141e",borderTop:`2px solid ${BORDER}`}}>
-              <div/>
-              <div style={{fontSize:13,fontWeight:700,color:MUTED}}>Total spend (excl. income & transfers)</div>
-              <div style={{fontSize:15,fontWeight:900,color:"#f97316",fontVariantNumeric:"tabular-nums"}}>{money2(visibleTotal)}</div>
-              <div/><div/><div/>
+                );
+              })}
+              <div style={{display:"grid",gridTemplateColumns:desktopTxnCols,columnGap:10,padding:"12px 16px",background:"#0f141e",borderTop:`2px solid ${BORDER}`,minWidth:desktopTxnMinW}}>
+                <div/>
+                <div style={{fontSize:13,fontWeight:700,color:MUTED}}>Total spend (excl. income & transfers)</div>
+                <div style={{fontSize:15,fontWeight:900,color:"#f97316",fontVariantNumeric:"tabular-nums"}}>{money2(visibleTotal)}</div>
+                <div/><div/><div/>
+              </div>
             </div>
           </>
         )}
@@ -2572,17 +2580,21 @@ function TransactionsPage({ isMobile }) {
       <Card>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
           <Label>Transactions</Label>
-          <div style={{display:"flex",gap:6}}>
+          <div style={{display:"inline-flex",gap:6,padding:4,borderRadius:12,background:BG,border:`1px solid ${BORDER}`}}>
             <button onClick={()=>setSource("checking")} style={{
-              padding:"6px 12px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",
-              background:source==="checking"?ACCENT+"22":BG,color:source==="checking"?ACCENT:MUTED,
-              border:`1px solid ${source==="checking"?ACCENT:BORDER}`
-            }}>Checking</button>
+              padding:"8px 14px",borderRadius:9,fontSize:13,fontWeight:800,cursor:"pointer",
+              background:source==="checking"?ACCENT+"22":"transparent",color:source==="checking"?ACCENT:MUTED,
+              border:`1px solid ${source==="checking"?ACCENT:BORDER}`,transition:"all .15s",boxShadow:source==="checking"?"inset 0 0 0 1px "+ACCENT+"55":"none"
+            }}>
+              🏦 Checking
+            </button>
             <button onClick={()=>setSource("cc")} style={{
-              padding:"6px 12px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",
-              background:source==="cc"?ACCENT+"22":BG,color:source==="cc"?ACCENT:MUTED,
-              border:`1px solid ${source==="cc"?ACCENT:BORDER}`
-            }}>Credit Card</button>
+              padding:"8px 14px",borderRadius:9,fontSize:13,fontWeight:800,cursor:"pointer",
+              background:source==="cc"?ACCENT+"22":"transparent",color:source==="cc"?ACCENT:MUTED,
+              border:`1px solid ${source==="cc"?ACCENT:BORDER}`,transition:"all .15s",boxShadow:source==="cc"?"inset 0 0 0 1px "+ACCENT+"55":"none"
+            }}>
+              💳 Credit Card
+            </button>
           </div>
         </div>
       </Card>
@@ -2692,24 +2704,43 @@ function MealPlanningPage({ wide }) {
   const remaining = plannedMonth - total;
   const spentPct = plannedMonth > 0 ? Math.min(100, (total / plannedMonth) * 100) : 0;
   const stores = storeText.split(",").map(x=>x.trim()).filter(Boolean);
-  const activePlan = aiPlanByMonth[selectedMonth] || null;
   const activeResponses = aiResponsesByMonth[selectedMonth] || [];
-  const aiMonthlyEstimate = Number(activePlan?.estimated_monthly_total || 0);
-  const aiDelta = plannedMonth - aiMonthlyEstimate;
-  const recipeCoveragePct = Math.round((((activePlan?.meals || []).filter(m => (m?.recipe_links?.breakfast || m?.recipe_links?.lunch || m?.recipe_links?.dinner)).length) / Math.max(1, (activePlan?.meals || []).length)) * 100);
 
   const normalizeUrl = (u) => {
-    const s = String(u || "").trim();
+    let s = String(u || "").trim();
     if (!s) return "";
-    if (/^https?:\/\//i.test(s)) return s;
-    return `https://${s}`;
+    s = s.replace(/[),.;]+$/g, "");
+    if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
+    if (/\.\.\.|<|>|\s/.test(s)) return "";
+    try {
+      const parsed = new URL(s);
+      if (!/^https?:$/i.test(parsed.protocol)) return "";
+      if (!parsed.hostname || !parsed.hostname.includes(".")) return "";
+      if (/^(example\.com|localhost)$/i.test(parsed.hostname)) return "";
+      return parsed.toString();
+    } catch {
+      return "";
+    }
   };
-  const fallbackProofLinks = (itemName, storeNames = []) => {
-    const q = encodeURIComponent(itemName || "grocery item");
-    const perStore = (storeNames || []).slice(0, 3).map(sn => `https://www.google.com/search?q=${encodeURIComponent(`${sn} ${itemName} price`)}`);
-    return [...perStore, `https://www.google.com/search?q=${q}+price`];
+  const recipeSearchLink = (mealName) => {
+    const q = encodeURIComponent(`${String(mealName || "easy meal").trim()} recipe`);
+    return `https://www.google.com/search?q=${q}`;
   };
-  const normalizePlan = (parsed) => {
+  const fallbackProofLinks = (itemName, storeNames = [], zip = "") => {
+    const safeItem = String(itemName || "grocery item").trim() || "grocery item";
+    const area = String(zip || "").trim();
+    const localHint = area ? ` near ${area}` : "";
+    const perStore = (storeNames || [])
+      .map(sn => String(sn || "").trim())
+      .filter(Boolean)
+      .slice(0, 4)
+      .map(sn => `https://www.google.com/search?q=${encodeURIComponent(`${sn} ${safeItem} price${localHint}`)}`);
+    return [
+      ...perStore,
+      `https://www.google.com/search?q=${encodeURIComponent(`${safeItem} price${localHint}`)}`,
+    ];
+  };
+  function normalizePlan(parsed) {
     const asPosNum = (v) => {
       const n = Number(v);
       return Number.isFinite(n) && n > 0 ? n : 0;
@@ -2717,20 +2748,23 @@ function MealPlanningPage({ wide }) {
     const meals = Array.isArray(parsed?.meals) ? parsed.meals.map((m) => ({
       ...m,
       recipe_links: {
-        breakfast: normalizeUrl(m?.recipe_links?.breakfast || ""),
-        lunch: normalizeUrl(m?.recipe_links?.lunch || ""),
-        dinner: normalizeUrl(m?.recipe_links?.dinner || ""),
+        breakfast: normalizeUrl(m?.recipe_links?.breakfast || "") || recipeSearchLink(m?.breakfast || "breakfast"),
+        lunch: normalizeUrl(m?.recipe_links?.lunch || "") || recipeSearchLink(m?.lunch || "lunch"),
+        dinner: normalizeUrl(m?.recipe_links?.dinner || "") || recipeSearchLink(m?.dinner || "dinner"),
       },
     })) : [];
     const grocery_items = Array.isArray(parsed?.grocery_items) ? parsed.grocery_items.map((it) => {
       const sc = it?.store_costs && typeof it.store_costs === "object" ? it.store_costs : {};
-      const links = Array.isArray(it?.price_proof_links)
+      const aiLinks = Array.isArray(it?.price_proof_links)
         ? it.price_proof_links.map(normalizeUrl).filter(Boolean)
         : [];
+      const fallbackLinks = fallbackProofLinks(it?.item, [it?.best_store, ...Object.keys(sc), ...stores], zipCode);
+      const links = [...fallbackLinks, ...aiLinks].filter((lnk, idx, arr) => arr.indexOf(lnk) === idx).slice(0, 6);
       return {
         ...it,
+        meal_usage: String(it?.meal_usage || "").trim() || "Not specified by AI",
         store_costs: sc,
-        price_proof_links: links.length ? links : fallbackProofLinks(it?.item, Object.keys(sc)),
+        price_proof_links: links,
       };
     }) : [];
     const weeklyFromModel = asPosNum(parsed?.estimated_weekly_total);
@@ -2745,7 +2779,14 @@ function MealPlanningPage({ wide }) {
       meals,
       grocery_items,
     };
-  };
+  }
+  const activePlan = useMemo(() => {
+    const raw = aiPlanByMonth[selectedMonth];
+    return raw ? normalizePlan(raw) : null;
+  }, [aiPlanByMonth, selectedMonth, storeText, zipCode]);
+  const aiMonthlyEstimate = Number(activePlan?.estimated_monthly_total || 0);
+  const aiDelta = plannedMonth - aiMonthlyEstimate;
+  const recipeCoveragePct = Math.round((((activePlan?.meals || []).filter(m => (m?.recipe_links?.breakfast || m?.recipe_links?.lunch || m?.recipe_links?.dinner)).length) / Math.max(1, (activePlan?.meals || []).length)) * 100);
   const copyShoppingList = async () => {
     const aiItems = (activePlan?.grocery_items || []).map(it => `- ${it.item}${it.quantity ? ` (${it.quantity})` : ""}${it.best_store ? ` [Best: ${it.best_store}${it.best_cost!=null ? ` ${fmt(it.best_cost)}` : ""}]` : ""}`);
     const txt = [...aiItems].join("\n").trim();
@@ -3005,6 +3046,7 @@ Hard constraints:
 6) Every grocery item must include at least one price_proof_links URL to show where the price came from.
 7) Prefer store-specific proof links close to the ZIP code when possible.
 8) Keep output compact: use at most 20 grocery items and at most 4 tips in each tips array.
+9) Every grocery item must set meal_usage with explicit meal references (example: "Mon dinner tacos, Tue lunch bowls").
 
 Return ONLY valid JSON with this shape:
 {
@@ -3239,29 +3281,50 @@ ${raw}`;
                 {copyMsg && <span style={{fontSize:11,color:"#22c55e"}}>{copyMsg}</span>}
               </div>
             </div>
-            {(activePlan.grocery_items || []).length===0 ? <div style={{fontSize:12,color:MUTED}}>No grocery list returned.</div> : (activePlan.grocery_items || []).map((it,i)=>(
-              <div key={i} style={{padding:"10px 2px",borderBottom:`1px solid ${i===activePlan.grocery_items.length-1?"transparent":BORDER}`}}>
-                <div style={{minWidth:0,flex:1}}>
-                  <div style={{fontSize:13,fontWeight:700,color:TEXT}}>{it.item} <span style={{fontSize:11,color:MUTED,fontWeight:400}}>({it.quantity || "qty n/a"})</span></div>
-                  <div style={{fontSize:11,color:MUTED,marginTop:2}}>{it.category || "General"} · {it.meal_usage || ""}</div>
-                  <div style={{fontSize:12,color:"#22c55e",fontWeight:800,marginTop:4}}>Best: {it.best_store || "n/a"} {it.best_cost!=null ? fmt(it.best_cost) : ""}</div>
-                </div>
-                <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
-                  {Object.entries(it.store_costs || {}).map(([sn,sv])=>(
-                    <span key={sn} style={{fontSize:11,color:MUTED,background:BG,border:`1px solid ${BORDER}`,borderRadius:999,padding:"2px 8px"}}>{sn}: {typeof sv === "number" ? fmt(sv) : sv}</span>
-                  ))}
-                </div>
-                {!!(it.price_proof_links || []).length && (
-                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
-                    {(it.price_proof_links || []).slice(0,4).map((lnk, idx)=>(
-                      <a key={idx} href={lnk} target="_blank" rel="noreferrer" style={{fontSize:11,color:"#06b6d4",textDecoration:"none",background:"#06b6d411",border:"1px solid #06b6d433",borderRadius:999,padding:"2px 8px"}}>
-                        Price proof {idx+1}
-                      </a>
+            {(activePlan.grocery_items || []).length===0 ? <div style={{fontSize:12,color:MUTED}}>No grocery list returned.</div> : (
+              <div style={{overflowX:"auto",border:`1px solid ${BORDER}`,borderRadius:10}}>
+                <table style={{width:"100%",minWidth:900,borderCollapse:"collapse"}}>
+                  <thead>
+                    <tr style={{background:BG}}>
+                      {["Item","Qty","Category","Meals it supports","Best Store","Store Costs","Price Proofs"].map(h => (
+                        <th key={h} style={{padding:"9px 10px",textAlign:"left",fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:".4px",borderBottom:`1px solid ${BORDER}`}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(activePlan.grocery_items || []).map((it,i)=>(
+                      <tr key={i} style={{background:i%2===0?SURFACE:BG}}>
+                        <td style={{padding:"10px",fontSize:13,fontWeight:700,color:TEXT,borderBottom:`1px solid ${BORDER}`}}>{it.item || "Unnamed item"}</td>
+                        <td style={{padding:"10px",fontSize:12,color:MUTED,borderBottom:`1px solid ${BORDER}`}}>{it.quantity || "qty n/a"}</td>
+                        <td style={{padding:"10px",fontSize:12,color:MUTED,borderBottom:`1px solid ${BORDER}`}}>{it.category || "General"}</td>
+                        <td style={{padding:"10px",fontSize:12,color:TEXT,borderBottom:`1px solid ${BORDER}`}}>{it.meal_usage || "Not specified by AI"}</td>
+                        <td style={{padding:"10px",fontSize:12,color:"#22c55e",fontWeight:800,borderBottom:`1px solid ${BORDER}`}}>
+                          {it.best_store || "n/a"} {it.best_cost!=null ? fmt(it.best_cost) : ""}
+                        </td>
+                        <td style={{padding:"10px",fontSize:11,color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
+                          {Object.entries(it.store_costs || {}).length
+                            ? Object.entries(it.store_costs || {}).map(([sn,sv]) => (
+                                <div key={sn}>{sn}: {typeof sv === "number" ? fmt(sv) : sv}</div>
+                              ))
+                            : "n/a"}
+                        </td>
+                        <td style={{padding:"10px",fontSize:11,borderBottom:`1px solid ${BORDER}`}}>
+                          {!!(it.price_proof_links || []).length ? (
+                            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                              {(it.price_proof_links || []).slice(0,4).map((lnk, idx)=>(
+                                <a key={idx} href={lnk} target="_blank" rel="noreferrer" style={{color:"#06b6d4",textDecoration:"none",background:"#06b6d411",border:"1px solid #06b6d433",borderRadius:999,padding:"2px 8px"}}>
+                                  Proof {idx+1}
+                                </a>
+                              ))}
+                            </div>
+                          ) : "n/a"}
+                        </td>
+                      </tr>
                     ))}
-                  </div>
-                )}
+                  </tbody>
+                </table>
               </div>
-            ))}
+            )}
           </Card>
         </>
       )}
@@ -4405,6 +4468,8 @@ function Settings({ isMobile }) {
     dashName, setDashName,
     showTithe, setShowTithe,
     showABA,   setShowABA,
+    readabilityMode, setReadabilityMode,
+    uiScale, setUiScale,
     hideZeroSummaryCats, setHideZeroSummaryCats,
     mobileTxnActionMenu, setMobileTxnActionMenu,
     customCats, setCustomCats, allCats,
@@ -4512,6 +4577,60 @@ function Settings({ isMobile }) {
             placeholder="e.g. Smith Budget"
             style={{flex:1,background:BG,border:`1px solid ${accentSet}`,borderRadius:8,padding:"8px 12px",color:TEXT,fontSize:15,outline:"none"}}
           />
+        </div>
+      </Card>
+
+      {/* Readability */}
+      <Card glow="#22c55e" style={{marginTop:16}}>
+        <Label>🔎 Readability</Label>
+        <div style={{fontSize:12,color:MUTED,marginBottom:14}}>
+          Improve readability on larger displays by scaling the desktop UI.
+        </div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:10}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:TEXT}}>Large Text Mode</div>
+            <div style={{fontSize:11,color:MUTED}}>Applies on desktop and widescreen layouts.</div>
+          </div>
+          <button
+            onClick={() => setReadabilityMode(v => !v)}
+            style={{
+              padding:"5px 16px",
+              borderRadius:8,
+              fontSize:12,
+              fontWeight:800,
+              cursor:"pointer",
+              transition:"all .15s",
+              background:readabilityMode ? "#22c55e22" : BORDER,
+              color:readabilityMode ? "#22c55e" : MUTED,
+              border:`1px solid ${readabilityMode ? "#22c55e55" : BORDER}`,
+            }}
+          >
+            {readabilityMode ? "✓ On" : "Off"}
+          </button>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:12,color:MUTED,minWidth:74}}>Font Scale</span>
+          <select
+            value={String(uiScale)}
+            onChange={e => setUiScale(parseFloat(e.target.value) || 1)}
+            disabled={!readabilityMode}
+            style={{
+              width:120,
+              background:BG,
+              border:`1px solid ${readabilityMode ? "#22c55e55" : BORDER}`,
+              borderRadius:8,
+              padding:"7px 10px",
+              color:readabilityMode ? TEXT : DIM,
+              fontSize:13,
+              outline:"none",
+              opacity:readabilityMode ? 1 : 0.6,
+            }}
+          >
+            <option value="1">100%</option>
+            <option value="1.1">110%</option>
+            <option value="1.2">120%</option>
+            <option value="1.3">130%</option>
+          </select>
         </div>
       </Card>
 
@@ -5343,7 +5462,7 @@ Do NOT include a "cat" field.`;
           <div style={{width:44,height:44,borderRadius:14,background:accentImport+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>📥</div>
           <div>
             <Label style={{marginBottom:2}}>Import Statement</Label>
-            <div style={{fontSize:13,color:MUTED}}>Upload a bank or credit card PDF/CSV. Import attempts local parsing first, then offers AI fallback only if needed.</div>
+            <div style={{fontSize:13,color:MUTED}}>CSV and PDF both parse locally first. AI is optional for categorization, and optional for PDF extraction only when local PDF parsing fails.</div>
           </div>
         </div>
       </Card>
@@ -5378,17 +5497,18 @@ Do NOT include a "cat" field.`;
           <div style={{marginBottom:16,padding:"12px 14px",borderRadius:12,background:BG,border:`1px solid ${BORDER}`}}>
             <div style={{fontSize:12,fontWeight:800,color:accentImport,marginBottom:8,textTransform:"uppercase",letterSpacing:".5px"}}>How AI is used</div>
             <div style={{fontSize:12,color:MUTED,display:"grid",gap:5}}>
-              <div>1. CSV parsing is local-only. PDF parsing now tries local extraction first.</div>
-              <div>2. If local PDF parsing fails, you can choose to send the PDF to AI for extraction.</div>
-              <div>3. Category matching runs locally in your browser first using your past transactions.</div>
-              <div>4. Only unmatched merchant descriptions are sent to AI for category suggestions.</div>
-              <div>5. You review/edit every row before anything is added to your dashboard.</div>
+              <div>1. CSV and PDF both start with local parsing in your browser.</div>
+              <div>2. CSV import is fully local by default; in Review, you can optionally run AI categorization.</div>
+              <div>3. PDF import tries local extraction first; if it fails, you can optionally send the PDF to AI for extraction.</div>
+              <div>4. Category matching runs locally first using your existing transactions.</div>
+              <div>5. Only unmatched merchant descriptions are sent to AI for category suggestions.</div>
+              <div>6. You review/edit every row before anything is added to your dashboard.</div>
             </div>
             <div style={{height:1,background:BORDER,margin:"10px 0"}}/>
             <div style={{fontSize:11,color:DIM,display:"grid",gap:4}}>
-              <div>Data sent on AI PDF parse (optional): PDF contents, statement type, selected month.</div>
-              <div>Data sent on AI categorization: unmatched merchant text and allowed category names.</div>
-              <div>CSV import stays local unless you click "Run AI Categorization".</div>
+              <div>Data sent on AI PDF extraction (optional): PDF contents, statement type, selected month.</div>
+              <div>Data sent on AI categorization (optional): unmatched merchant descriptions and allowed category names.</div>
+              <div>No transactions are imported until you confirm in Review.</div>
             </div>
           </div>
 
@@ -5409,10 +5529,10 @@ Do NOT include a "cat" field.`;
             <div style={{fontSize:40,marginBottom:12}}>{fileName?"✅":fileType==="csv"?"📊":"📄"}</div>
             {fileName
               ? <><div style={{fontSize:15,fontWeight:700,color:accentImport,marginBottom:4}}>{fileName}</div>
-                  <div style={{fontSize:12,color:MUTED}}>{fileType==="csv"?"CSV ready — no AI needed":"Ready to parse · click to change"} · click to change</div></>
+                  <div style={{fontSize:12,color:MUTED}}>{fileType==="csv"?"CSV ready — local parse first (AI optional in Review)":"PDF ready — local parse first, AI fallback optional"} · click to change</div></>
               : <><div style={{fontSize:15,fontWeight:600,color:TEXT,marginBottom:6}}>Drop your bank statement here</div>
                   <div style={{fontSize:12,color:MUTED}}>or click to browse · PDF or CSV</div>
-                  <div style={{fontSize:11,color:DIM,marginTop:8}}>PDF/CSV: local parse first, AI optional fallback</div></>
+                  <div style={{fontSize:11,color:DIM,marginTop:8}}>PDF/CSV: local parse first · AI options are available only when needed.</div></>
             }
           </div>
 
@@ -5432,7 +5552,7 @@ Do NOT include a "cat" field.`;
               border:"none",transition:"all .2s",letterSpacing:".2px",
             }}>
             {csvText
-              ? `📊 Import ${month} CSV (no AI needed)`
+              ? `📊 Import ${month} CSV Locally (AI Optional in Review)`
               : pdfB64
                 ? `Local Parse ${month} ${stmtSrc === "checking" ? "Checking" : "Credit Card"} Statement`
                 : "Upload a PDF or CSV first"
@@ -5446,7 +5566,7 @@ Do NOT include a "cat" field.`;
                 background:"#8b5cf622",color:"#8b5cf6",cursor:"pointer",
                 border:"1px solid #8b5cf655",transition:"all .2s",
               }}>
-              AI Fallback: Send PDF for parsing
+              Optional AI PDF Extraction (Send PDF to AI)
             </button>
           )}
         </Card>
@@ -5484,7 +5604,7 @@ Do NOT include a "cat" field.`;
                   <div style={{marginTop:6,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                     {matchStats.csv && !aiRanOnCsv
                       ? <span style={{fontSize:11,padding:"2px 8px",borderRadius:99,background:"#06b6d422",color:"#06b6d4",border:"1px solid #06b6d444",fontWeight:700}}>
-                          📊 CSV parsed client-side · no AI used
+                          📊 CSV parsed locally · AI not used yet
                         </span>
                       : <span style={{fontSize:11,padding:"2px 8px",borderRadius:99,background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e44",fontWeight:700}}>
                           ✓ {matchStats.local} matched locally (free)
@@ -5500,7 +5620,7 @@ Do NOT include a "cat" field.`;
                         style={{fontSize:11,padding:"3px 10px",borderRadius:99,cursor:runningAI?"default":"pointer",fontWeight:700,
                           background:runningAI?"#1e2535":"#8b5cf622",color:runningAI?MUTED:"#8b5cf6",
                           border:`1px solid ${runningAI?"#1e2535":"#8b5cf644"}`,transition:"all .15s"}}>
-                        {runningAI ? "⏳ Running AI…" : "✨ Run AI Categorization"}
+                        {runningAI ? "⏳ Running AI…" : "✨ Optional: Run AI Categorization"}
                       </button>
                     )}
                   </div>
@@ -5650,7 +5770,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.10";
+const APP_VERSION = "0.1.11";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
@@ -5671,16 +5791,42 @@ function monthFromDateString(dateStr) {
   const idx = Number(m[1]) - 1;
   return idx >= 0 && idx < 12 ? APP_MONTHS[idx] : "";
 }
+function yearFromDateString(dateStr) {
+  const s = (dateStr || "").toString().trim();
+  if (!s) return null;
+  const ymd = s.match(/^(\d{4})[-/]\d{1,2}[-/]\d{1,2}$/);
+  if (ymd) return Number(ymd[1]);
+  const mdy = s.match(/^\d{1,2}[\/-]\d{1,2}[\/-](\d{2}|\d{4})$/);
+  if (!mdy) return null;
+  const raw = mdy[1];
+  if (raw.length === 4) return Number(raw);
+  const yy = Number(raw);
+  return yy >= 70 ? 1900 + yy : 2000 + yy;
+}
 function deriveTxnMonth(t) {
   const fromDate = monthFromDateString(t?.date);
   if (fromDate) return fromDate;
   return normalizeMonthName(t?.month) || "January";
+}
+function deriveTxnYear(t, fallbackYear = null) {
+  const fromField = Number(t?.year);
+  if (Number.isFinite(fromField) && fromField > 1900 && fromField < 3000) return fromField;
+  const fromDate = yearFromDateString(t?.date);
+  if (Number.isFinite(fromDate) && fromDate > 1900 && fromDate < 3000) return fromDate;
+  return fallbackYear;
 }
 function latestMonthFromTxns(checkTxns = [], ccTxns = []) {
   const all = [...checkTxns, ...ccTxns].map(t => deriveTxnMonth(t)).filter(Boolean);
   const unique = [...new Set(all)];
   const months = APP_MONTHS.filter(m => unique.includes(m));
   return months.length ? months[months.length - 1] : "January";
+}
+function latestYearFromTxns(checkTxns = [], ccTxns = [], fallbackYear = new Date().getFullYear()) {
+  const years = [...checkTxns, ...ccTxns]
+    .map(t => deriveTxnYear(t))
+    .filter(y => Number.isFinite(y));
+  if (!years.length) return fallbackYear;
+  return Math.max(...years);
 }
 
 // ── APP ───────────────────────────────────────────────────────────────────────
@@ -5690,13 +5836,19 @@ export default function BudgetDashboardClean() {
   const isMobile = width < 768;
   const wide     = width >= 1000;
   const props    = { wide, isMobile };
+  const currentYear = new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState(() => {
+    const stored = parseInt(ls.get("budget_selectedYear") || "", 10);
+    if (Number.isFinite(stored)) return stored;
+    return latestYearFromTxns(ls.getJSON("budget_checkTxns", []), ls.getJSON("budget_ccTxns", []), currentYear);
+  });
 
   // ── Live transaction state — persisted to localStorage ────────────────────
   const [checkTxns, setCheckTxns] = useState(() => {
-    return ls.getJSON("budget_checkTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), excludeFromTags: !!t.excludeFromTags }));
+    return ls.getJSON("budget_checkTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, currentYear), excludeFromTags: !!t.excludeFromTags }));
   });
   const [ccTxns, setCCTxns] = useState(() => {
-    return ls.getJSON("budget_ccTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), excludeFromTags: !!t.excludeFromTags }));
+    return ls.getJSON("budget_ccTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, currentYear), excludeFromTags: !!t.excludeFromTags }));
   });
 
   const [selectedMonth, setSelectedMonth] = useState(() => latestMonthFromTxns(
@@ -5734,14 +5886,28 @@ export default function BudgetDashboardClean() {
   useEffect(() => { ls.set("budget_t2carry", String(t2CarryIn)); }, [t2CarryIn]);
   useEffect(() => { ls.set("budget_groceryGoal", String(groceryGoal)); }, [groceryGoal]);
   useEffect(() => { ls.set("budget_familySize", String(familySize)); }, [familySize]);
+  useEffect(() => { ls.set("budget_selectedYear", String(selectedYear)); }, [selectedYear]);
 
   // All months that have transaction data
   const availableMonths = useMemo(() => {
-    const all = [...checkTxns, ...ccTxns].map(t => deriveTxnMonth(t)).filter(Boolean);
+    const all = [...checkTxns, ...ccTxns]
+      .filter(t => (deriveTxnYear(t, currentYear) || currentYear) === selectedYear)
+      .map(t => deriveTxnMonth(t))
+      .filter(Boolean);
     const unique = [...new Set(all)];
     const months = APP_MONTHS.filter(m => unique.includes(m));
     return months.length ? months : ["January"];
-  }, [checkTxns, ccTxns]);
+  }, [checkTxns, ccTxns, selectedYear, currentYear]);
+  const availableYears = useMemo(() => {
+    const years = [...checkTxns, ...ccTxns]
+      .map(t => deriveTxnYear(t))
+      .filter(y => Number.isFinite(y));
+    const unique = [...new Set(years)].sort((a, b) => a - b);
+    return unique.length ? unique : [currentYear];
+  }, [checkTxns, ccTxns, currentYear]);
+  useEffect(() => {
+    if (!availableYears.includes(selectedYear)) setSelectedYear(availableYears[availableYears.length - 1] || currentYear);
+  }, [availableYears, selectedYear, currentYear]);
   useEffect(() => {
     if (!availableMonths.includes(selectedMonth)) setSelectedMonth(availableMonths[availableMonths.length - 1] || "January");
   }, [availableMonths, selectedMonth]);
@@ -5756,6 +5922,12 @@ export default function BudgetDashboardClean() {
   const [dashName, setDashName] = useState(() => ls.get("budget_dashName") || "My Budget");
   const [showTithe, setShowTithe] = useState(() => ls.get("budget_showTithe") !== "0");
   const [showABA, setShowABA]   = useState(() => ls.get("budget_showABA")   !== "0");
+  const [readabilityMode, setReadabilityMode] = useState(() => ls.get("budget_readabilityMode") === "1");
+  const [uiScale, setUiScale] = useState(() => {
+    const n = parseFloat(ls.get("budget_uiScale") || "1");
+    const allowed = [1, 1.1, 1.2, 1.3];
+    return allowed.includes(n) ? n : 1;
+  });
   const [hideZeroSummaryCats, setHideZeroSummaryCats] = useState(() => ls.get("budget_hideZeroSummaryCats") === "1");
   const [mobileTxnActionMenu, setMobileTxnActionMenu] = useState(() => ls.get("budget_mobileTxnActionMenu") !== "0");
   const [customCats, setCustomCats] = useState(() => {
@@ -5778,6 +5950,8 @@ export default function BudgetDashboardClean() {
   useEffect(() => { ls.set("budget_dashName",  dashName); }, [dashName]);
   useEffect(() => { ls.set("budget_showTithe", showTithe ? "1" : "0"); }, [showTithe]);
   useEffect(() => { ls.set("budget_showABA",   showABA   ? "1" : "0"); }, [showABA]);
+  useEffect(() => { ls.set("budget_readabilityMode", readabilityMode ? "1" : "0"); }, [readabilityMode]);
+  useEffect(() => { ls.set("budget_uiScale", String(uiScale)); }, [uiScale]);
   useEffect(() => { ls.set("budget_hideZeroSummaryCats", hideZeroSummaryCats ? "1" : "0"); }, [hideZeroSummaryCats]);
   useEffect(() => { ls.set("budget_mobileTxnActionMenu", mobileTxnActionMenu ? "1" : "0"); }, [mobileTxnActionMenu]);
 
@@ -5801,8 +5975,18 @@ export default function BudgetDashboardClean() {
       note: patch.note ?? "",
     };
     if (!cleanPatch.desc || !cleanPatch.date || Number.isNaN(cleanPatch.amount)) return;
-    if (src === "checking") setCheckTxns(prev => prev.map(t => t.id === id ? { ...t, ...cleanPatch, month: deriveTxnMonth({ ...t, ...cleanPatch }) } : t));
-    else                    setCCTxns(prev => prev.map(t => t.id === id ? { ...t, ...cleanPatch, month: deriveTxnMonth({ ...t, ...cleanPatch }) } : t));
+    if (src === "checking") setCheckTxns(prev => prev.map(t => t.id === id ? {
+      ...t,
+      ...cleanPatch,
+      month: deriveTxnMonth({ ...t, ...cleanPatch }),
+      year: deriveTxnYear({ ...t, ...cleanPatch }, t.year || selectedYear),
+    } : t));
+    else                    setCCTxns(prev => prev.map(t => t.id === id ? {
+      ...t,
+      ...cleanPatch,
+      month: deriveTxnMonth({ ...t, ...cleanPatch }),
+      year: deriveTxnYear({ ...t, ...cleanPatch }, t.year || selectedYear),
+    } : t));
   }, []);
 
   const deleteTxn = useCallback((src, id, opts = {}) => {
@@ -5855,15 +6039,15 @@ export default function BudgetDashboardClean() {
     if (src === "checking") {
       setCheckTxns(prev => {
         const nextIdx = prev.length;
-        return [...prev, ...newTxns.map((t, i) => ({ ...t, month: deriveTxnMonth(t), excludeFromTags: !!t.excludeFromTags, id: `c${nextIdx + i}` }))];
+        return [...prev, ...newTxns.map((t, i) => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, selectedYear), excludeFromTags: !!t.excludeFromTags, id: `c${nextIdx + i}` }))];
       });
     } else {
       setCCTxns(prev => {
         const nextIdx = prev.length;
-        return [...prev, ...newTxns.map((t, i) => ({ ...t, month: deriveTxnMonth(t), excludeFromTags: !!t.excludeFromTags, id: `cc${nextIdx + i}` }))];
+        return [...prev, ...newTxns.map((t, i) => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, selectedYear), excludeFromTags: !!t.excludeFromTags, id: `cc${nextIdx + i}` }))];
       });
     }
-  }, []);
+  }, [selectedYear]);
 
   // ── Derived summary rows — norm auto-computed from actual − one-times ──────
   const summaryRows = useMemo(() => {
@@ -5911,6 +6095,7 @@ export default function BudgetDashboardClean() {
     summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus,
     updateTxnCat, updateTxn, deleteTxn, toggleTxnTagging, clearTxns, addTxns, replaceTxn,
     selectedMonth, setSelectedMonth, availableMonths,
+    selectedYear, setSelectedYear, availableYears,
     payoffs, setPayoffs,
     waterfallDisabled, setWaterfallDisabled,
     takeHome, setTakeHome,
@@ -5922,6 +6107,8 @@ export default function BudgetDashboardClean() {
     dashName, setDashName,
     showTithe, setShowTithe,
     showABA,   setShowABA,
+    readabilityMode, setReadabilityMode,
+    uiScale, setUiScale,
     hideZeroSummaryCats, setHideZeroSummaryCats,
     mobileTxnActionMenu, setMobileTxnActionMenu,
     customCats, setCustomCats, allCats, catColorsAll,
@@ -5965,9 +6152,28 @@ export default function BudgetDashboardClean() {
     </div>
   );
 
+  const effectiveScale = !isMobile && readabilityMode ? uiScale : 1;
+  const scaleStyle = effectiveScale === 1
+    ? {}
+    : {
+        transform: `scale(${effectiveScale})`,
+        transformOrigin: "top left",
+        width: `calc(100% / ${effectiveScale})`,
+        minHeight: `calc(100vh / ${effectiveScale})`,
+      };
+
   return (
     <BudgetCtx.Provider value={budget}>
-    <div style={{background:BG,minHeight:"100vh",fontFamily:"'DM Sans',system-ui,sans-serif",color:TEXT,width:"100%",display:"flex",flexDirection:"column"}}>
+    <div style={{
+      background:BG,
+      minHeight:"100vh",
+      fontFamily:"'DM Sans',system-ui,sans-serif",
+      color:TEXT,
+      width:"100%",
+      display:"flex",
+      flexDirection:"column",
+      ...scaleStyle,
+    }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700;9..40,900&display=swap');
         *{box-sizing:border-box;margin:0;padding:0;}
@@ -5988,7 +6194,7 @@ export default function BudgetDashboardClean() {
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",paddingLeft:14,paddingRight:14,marginBottom:8}}>
               <div>
                 <div style={{fontSize:17,fontWeight:900,color:ACCENT,lineHeight:1}}>{dashName}</div>
-                <div style={{fontSize:11,color:MUTED,marginTop:2}}>{selectedMonth} 2026 · {visibleNav.find(n=>n.id===page)?.label}</div>
+                <div style={{fontSize:11,color:MUTED,marginTop:2}}>{selectedMonth} {selectedYear} · {visibleNav.find(n=>n.id===page)?.label}</div>
               </div>
               {/* Compact gap badge */}
               <div style={{background:"#ef444422",border:"1px solid #ef444444",borderRadius:10,padding:"5px 10px",textAlign:"center",flexShrink:0}}>
@@ -5996,7 +6202,19 @@ export default function BudgetDashboardClean() {
                 <div style={{fontSize:16,fontWeight:900,color:"#ef4444",fontVariantNumeric:"tabular-nums",lineHeight:1.2}}>−{fmt(Math.abs(normSurplus))}</div>
               </div>
             </div>
-            {/* Row 2: month picker */}
+            {/* Row 2: year selector */}
+            <div style={{display:"flex",gap:5,overflowX:"auto",paddingLeft:14,paddingRight:14,paddingBottom:6}}>
+              <div style={{fontSize:9,color:DIM,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",flexShrink:0,alignSelf:"center",marginRight:2}}>Year</div>
+              {availableYears.map(y=>(
+                <button key={y} onClick={()=>setSelectedYear(y)} style={{
+                  padding:"4px 10px",borderRadius:7,fontSize:11,fontWeight:700,flexShrink:0,
+                  background:selectedYear===y?ACCENT+"22":SURFACE,
+                  color:selectedYear===y?ACCENT:MUTED,
+                  border:`1px solid ${selectedYear===y?ACCENT:BORDER}`,cursor:"pointer",
+                }}>{y}</button>
+              ))}
+            </div>
+            {/* Row 3: month picker */}
             <div style={{display:"flex",gap:5,overflowX:"auto",paddingLeft:14,paddingRight:14,paddingBottom:4}}>
               <div style={{fontSize:9,color:DIM,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",flexShrink:0,alignSelf:"center",marginRight:2}}>Month</div>
               {availableMonths.map(m=>(
@@ -6040,11 +6258,22 @@ export default function BudgetDashboardClean() {
           </div>
         </>
       ) : (
-        <div style={{display:"flex",width:"100%",minHeight:"100vh"}}>
-          <div style={{width:240,background:"#0f141e",borderRight:`1px solid ${BORDER}`,display:"flex",flexDirection:"column",flexShrink:0}}>
+        <div style={{display:"flex",width:"100%",height:"100vh",overflow:"hidden"}}>
+          <div style={{width:240,background:"#0f141e",borderRight:`1px solid ${BORDER}`,display:"flex",flexDirection:"column",flexShrink:0,overflowY:"auto"}}>
             <div style={{padding:"24px 20px 16px",borderBottom:`1px solid ${BORDER}`}}>
               <div style={{fontSize:20,fontWeight:900,color:ACCENT}}>{dashName}</div>
-              <div style={{fontSize:12,color:MUTED,marginTop:3,marginBottom:12}}>2026</div>
+              <div style={{fontSize:12,color:MUTED,marginTop:3,marginBottom:12}}>{selectedYear}</div>
+              <div style={{fontSize:10,color:DIM,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",marginBottom:6}}>Viewing Year</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:10}}>
+                {availableYears.map(y=>(
+                  <button key={y} onClick={()=>setSelectedYear(y)} style={{
+                    padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:700,cursor:"pointer",
+                    background:selectedYear===y?ACCENT+"22":BG,
+                    color:selectedYear===y?ACCENT:MUTED,
+                    border:`1px solid ${selectedYear===y?ACCENT:BORDER}`,transition:"all .12s",
+                  }}>{y}</button>
+                ))}
+              </div>
               {/* Month picker in sidebar */}
               <div style={{fontSize:10,color:DIM,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",marginBottom:6}}>Viewing Month</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
@@ -6089,11 +6318,19 @@ export default function BudgetDashboardClean() {
               </div>
             </div>
           </div>
-          <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column"}}>
+          <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",height:"100vh",overflowY:"auto"}}>
             <div style={{borderBottom:`1px solid ${BORDER}`,padding:"16px 32px",display:"flex",alignItems:"center",justifyContent:"space-between",background:BG+"cc",backdropFilter:"blur(12px)",position:"sticky",top:0,zIndex:10}}>
               <div>
-                <div style={{fontSize:22,fontWeight:800,color:TEXT}}>{visibleNav.find(n=>n.id===page)?.label}</div>
-                <div style={{fontSize:12,color:MUTED,marginTop:2}}>{selectedMonth} 2026 · {dashName}</div>
+                <div style={{fontSize:22,fontWeight:800,color:TEXT}}>
+                  {visibleNav.find(n=>n.id===page)?.label}
+                </div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+                  <Tag color={normSurplus>=0 ? "#22c55e" : "#f59e0b"}>
+                    My Budget Status: {normSurplus>=0 ? "On Track" : "Needs Attention"}
+                  </Tag>
+                  <Tag color="#22c55e">Take-home: {fmt(takeHome)}</Tag>
+                  <Tag color="#06b6d4">Spent: {fmt(janActual)}</Tag>
+                </div>
               </div>
               {gapBadge}
             </div>
