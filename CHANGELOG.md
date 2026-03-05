@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.2] - 2026-03-05
+
+### Added
+- Transaction add-form validation feedback with required-field messaging and success confirmation.
+- Family Size setting in Settings (persisted) and included in AI tips prompt context.
+- Month-over-month comparison context in AI tips prompt (prior income/spend/gap summary).
+- Transactions add-form feedback supports manual dismiss.
+
+### Changed
+- Transactions add form now derives month from selected date (removed redundant month selector).
+- Currency display now defaults to cents app-wide (`$X.XX`) for consistency across pages.
+- Dashboard credits link now targets GitHub Pages live app URL.
+- Meal plan AI prompt now explicitly optimizes against monthly target with tighter cost constraints.
+
+### Fixed
+- Encoding/mojibake regressions that broke icons and symbols across summary/settings/navigation.
+- Transactions page white-screen regression caused by hook ordering in add-form feedback state.
+- Transaction delete flow now consistently prompts via in-app confirmation modal.
+- Transactions feedback message now auto-clears on new filter/form actions.
+
 ## [0.1.1] - 2026-03-05
 
 ### Added

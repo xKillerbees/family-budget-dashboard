@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, createContext, useContext, useRef } from "react";
+﻿import { useState, useEffect, useMemo, useCallback, createContext, useContext, useRef } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, ReferenceLine, LineChart, Line, AreaChart, Area, CartesianGrid, Legend, LabelList } from "recharts";
 
 // ── YOUR ANTHROPIC API KEY ────────────────────────────────────────────────────
@@ -132,13 +132,18 @@ const BudgetCtx = createContext(null);
 const useBudget = () => useContext(BudgetCtx);
 
 
-const fmt  = (n, d=0) => new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:d}).format(Math.abs(n));
+const fmt  = (n, d=2) => new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:d,maximumFractionDigits:d}).format(Math.abs(n));
 const BG="#0d1117",SURFACE="#161b27",BORDER="#1e2535",MUTED="#475569",DIM="#334155",TEXT="#e2e8f0",ACCENT="#a78bfa";
 
 function useWindowWidth() {
   const [w,setW] = useState(typeof window!=="undefined"?window.innerWidth:900);
   useEffect(()=>{ const fn=()=>setW(window.innerWidth); window.addEventListener("resize",fn); return()=>window.removeEventListener("resize",fn); },[]);
   return w;
+}
+
+function confirmDeleteAction(message) {
+  if (typeof window === "undefined") return true;
+  return window.confirm(message || "Delete this item? This cannot be undone.");
 }
 
 // ── ATOMS ─────────────────────────────────────────────────────────────────────
@@ -339,7 +344,7 @@ function CashFlowSankey({ viewMode }) {
 
 // ── SUMMARY ───────────────────────────────────────────────────────────────────
 function Summary({wide, isMobile}) {
-  const [view, setView] = useState("norm");
+  const [view, setView] = useState("actual");
   const [expandedCat, setExpandedCat] = useState(null);
   const { summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus, takeHome, selectedMonth, dashName, oneTimes, hideZeroSummaryCats } = useBudget();
 
@@ -737,8 +742,10 @@ function Scenarios({ wide, isMobile }) {
   const updatePlan = (pid, field, val) =>
     setPlans(prev => prev.map(p => p.id===pid ? {...p, [field]:val} : p));
 
-  const removePlan = pid =>
+  const removePlan = pid => {
+    if (!confirmDeleteAction("Delete this scenario plan?")) return;
     setPlans(prev => prev.filter(p => p.id !== pid));
+  };
 
   const addItem = pid => setPlans(prev => prev.map(p =>
     p.id!==pid ? p : {...p, items:[...p.items, {id:mkItemId(), desc:"", amount:0, cat:"Misc"}]}
@@ -748,9 +755,12 @@ function Scenarios({ wide, isMobile }) {
     p.id!==pid ? p : {...p, items: p.items.map(it => it.id!==iid ? it : {...it,[field]:val})}
   ));
 
-  const removeItem = (pid, iid) => setPlans(prev => prev.map(p =>
-    p.id!==pid ? p : {...p, items: p.items.filter(it => it.id!==iid)}
-  ));
+  const removeItem = (pid, iid) => {
+    if (!confirmDeleteAction("Delete this scenario line item?")) return;
+    setPlans(prev => prev.map(p =>
+      p.id!==pid ? p : {...p, items: p.items.filter(it => it.id!==iid)}
+    ));
+  };
 
   // ── Custom scenario steps ────────────────────────────────────────────────
   const [customSteps, setCustomSteps] = useState(() => {
@@ -766,7 +776,10 @@ function Scenarios({ wide, isMobile }) {
     saveCustomSteps([...customSteps, step]);
     setNewStepLabel(""); setNewStepAmt("");
   };
-  const removeCustomStep = (id) => saveCustomSteps(customSteps.filter(s => s.id !== id));
+  const removeCustomStep = (id) => {
+    if (!confirmDeleteAction("Delete this custom impact step?")) return;
+    saveCustomSteps(customSteps.filter(s => s.id !== id));
+  };
   // ── Waterfall data — reorderable over-budget categories + payoffs + custom ─────────
   const { summaryRows: wfRows, waterfallDisabled } = useBudget();
   const baseImpactSteps = useMemo(() => {
@@ -1229,6 +1242,7 @@ function Payoffs({wide}) {
     setPayoffs(prev => prev.map(p => p.id===id ? {...p, [field]:val} : p));
 
   const removePayoff = id => {
+    if (!confirmDeleteAction("Delete this payoff account?")) return;
     setPayoffs(prev => prev.filter(p => p.id !== id));
     setEnabled(prev => { const n=new Set(prev); n.delete(id); return n; });
     if(editId===id) { setEditId(null); setEditDraft({}); }
@@ -1256,7 +1270,7 @@ function Payoffs({wide}) {
     setAdding(false);
   };
 
-  const allTxns = [...checkTxns, ...ccTxns];
+  const allTxns = [...checkTxns, ...ccTxns].filter(t => !t.excludeFromTags);
 
   // Compute live balance, progress, and time-to-payoff for a debt
   const getPayoffStats = (p) => {
@@ -1864,7 +1878,10 @@ function SplitModal({ txn, src, onClose }) {
   const updatePart = (i, field, val) =>
     setParts(prev => prev.map((p, idx) => idx === i ? { ...p, [field]: val } : p));
   const addPart = () => setParts(prev => [...prev, { desc: "", amount: 0, cat: allCats[0] }]);
-  const removePart = (i) => setParts(prev => prev.filter((_, idx) => idx !== i));
+  const removePart = (i) => {
+    if (!confirmDeleteAction("Remove this split line?")) return;
+    setParts(prev => prev.filter((_, idx) => idx !== i));
+  };
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -2022,7 +2039,13 @@ IMPORTANT: The amounts MUST sum to exactly ${txn.amount.toFixed(2)}. Group small
 
 // ── TRANSACTION TABLE ─────────────────────────────────────────────────────────
 function TxnTable({ src, isMobile }) {
-  const { checkTxns, ccTxns, updateTxnCat, updateTxn, deleteTxn, replaceTxn, selectedMonth, availableMonths, addTxns, allCats, catColorsAll } = useBudget();
+  const {
+    checkTxns, ccTxns,
+    updateTxnCat, updateTxn, deleteTxn, replaceTxn,
+    selectedMonth, availableMonths, addTxns,
+    allCats, catColorsAll, toggleTxnTagging,
+    mobileTxnActionMenu, oneTimes, setOneTimes,
+  } = useBudget();
   const [splitTxn, setSplitTxn] = useState(null); // txn being split
   const [editId, setEditId] = useState(null);
   const [editDraft, setEditDraft] = useState({ date:"", desc:"", amount:"", note:"" });
@@ -2031,7 +2054,15 @@ function TxnTable({ src, isMobile }) {
   const [monthFilter, setMonthFilter] = useState(selectedMonth);
   const [catFilter,   setCatFilter]   = useState("All");
   const [search,      setSearch]      = useState("");
-  const [sortBy,      setSortBy]      = useState("date");
+  const [sortBy,      setSortBy]      = useState("date_desc");
+  const [openMenuId,  setOpenMenuId]  = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const money2 = useCallback((n) => new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Math.abs(Number(n) || 0)), []);
 
   // Keep monthFilter in sync when global month changes
   useEffect(() => { setMonthFilter(selectedMonth); }, [selectedMonth]);
@@ -2039,9 +2070,17 @@ function TxnTable({ src, isMobile }) {
   const filtered = allTxns
     .filter(t => t.month === monthFilter)
     .filter(t => catFilter === "All" || t.cat === catFilter)
-    .filter(t => !search || t.desc.toLowerCase().includes(search.toLowerCase()) || t.cat.toLowerCase().includes(search.toLowerCase()))
+    .filter(t => !search || t.desc.toLowerCase().includes(search.toLowerCase()) || t.cat.toLowerCase().includes(search.toLowerCase()) || (t.note || "").toLowerCase().includes(search.toLowerCase()))
     .slice()
-    .sort((a,b) => sortBy === "date" ? a.date.localeCompare(b.date) : b.amount - a.amount);
+    .sort((a,b) => {
+      if (sortBy === "date_asc") return a.date.localeCompare(b.date);
+      if (sortBy === "date_desc") return b.date.localeCompare(a.date);
+      if (sortBy === "amount_asc") return a.amount - b.amount;
+      if (sortBy === "amount_desc") return b.amount - a.amount;
+      if (sortBy === "desc_asc") return (a.desc || "").localeCompare(b.desc || "");
+      if (sortBy === "desc_desc") return (b.desc || "").localeCompare(a.desc || "");
+      return 0;
+    });
 
   const visibleTotal = filtered.filter(t => t.cat !== "Income" && t.cat !== "Transfer").reduce((s,t) => s + t.amount, 0);
 
@@ -2051,16 +2090,35 @@ function TxnTable({ src, isMobile }) {
   const [newDesc, setNewDesc] = useState("");
   const [newAmt,  setNewAmt]  = useState("");
   const [newCat,  setNewCat]  = useState(allCats[0]);
-  const [newMon,  setNewMon]  = useState(monthFilter);
-  useEffect(() => { setNewMon(monthFilter); }, [monthFilter]);
+  const [addAttempted, setAddAttempted] = useState(false);
+  const [addFeedback, setAddFeedback] = useState(null); // {type:"error"|"success", text:string}
+  useEffect(() => { if (addFeedback) setAddFeedback(null); }, [monthFilter, catFilter, search, sortBy, showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submitManual = () => {
+    setAddAttempted(true);
     const amount = parseFloat(newAmt);
-    if (!newDesc.trim() || isNaN(amount)) return;
-    const dateParts = newDate ? newDate.split("-") : null;
-    const date = dateParts && dateParts.length === 3 ? `${dateParts[1]}/${dateParts[2]}` : "01/01";
-    addTxns(src, [{ date, desc: newDesc.trim(), amount, cat: newCat, month: newMon, note: "" }]);
+    const missing = [];
+    if (!newDate) missing.push("Date");
+    if (!newDesc.trim()) missing.push("Description");
+    if (Number.isNaN(amount)) missing.push("Amount");
+    if (missing.length) {
+      setAddFeedback({ type: "error", text: `Required: ${missing.join(", ")}` });
+      return;
+    }
+    const dateParts = newDate.split("-");
+    if (!dateParts || dateParts.length !== 3) {
+      setAddFeedback({ type: "error", text: "Date is required in YYYY-MM-DD format." });
+      return;
+    }
+    const mm = dateParts[1];
+    const dd = dateParts[2];
+    const monthIdx = Math.max(0, Math.min(11, Number(mm) - 1));
+    const month = APP_MONTHS[monthIdx] || selectedMonth;
+    const date = `${mm}/${dd}`;
+    addTxns(src, [{ date, desc: newDesc.trim(), amount, cat: newCat, month, note: "" }]);
     setNewDesc(""); setNewAmt(""); setNewDate("");
+    setAddAttempted(false);
+    setAddFeedback({ type: "success", text: `Saved transaction to ${month}.` });
     setShowAdd(false);
   };
 
@@ -2079,9 +2137,69 @@ function TxnTable({ src, isMobile }) {
     cancelEdit();
   };
 
+  const isOneTimeTxn = useCallback((t) => {
+    const hasNoteFlag = /\bONE-TIME\b/i.test(t.note || "");
+    if (hasNoteFlag) return true;
+    return oneTimes.some(o =>
+      (o.cat || "") === (t.cat || "") &&
+      (o.name || "").trim().toLowerCase() === (t.desc || "").trim().toLowerCase() &&
+      Math.abs((Number(o.amount) || 0) - Math.abs(Number(t.amount) || 0)) < 0.01
+    );
+  }, [oneTimes]);
+
+  const toggleOneTimeTxn = useCallback((t) => {
+    const current = isOneTimeTxn(t);
+    if (current) {
+      setOneTimes(prev => prev.filter(o => !(
+        (o.cat || "") === (t.cat || "") &&
+        (o.name || "").trim().toLowerCase() === (t.desc || "").trim().toLowerCase() &&
+        Math.abs((Number(o.amount) || 0) - Math.abs(Number(t.amount) || 0)) < 0.01
+      )));
+    } else {
+      setOneTimes(prev => {
+        const exists = prev.some(o =>
+          (o.cat || "") === (t.cat || "") &&
+          (o.name || "").trim().toLowerCase() === (t.desc || "").trim().toLowerCase() &&
+          Math.abs((Number(o.amount) || 0) - Math.abs(Number(t.amount) || 0)) < 0.01
+        );
+        if (exists) return prev;
+        return [...prev, { name: t.desc || "One-time expense", amount: Math.abs(Number(t.amount) || 0), cat: t.cat }];
+      });
+    }
+
+    const cleaned = (t.note || "").replace(/\bONE-TIME\b/ig, "").replace(/\s{2,}/g, " ").trim();
+    const nextNote = current ? cleaned : [cleaned, "ONE-TIME"].filter(Boolean).join(" ");
+    updateTxn(src, t.id, { date: t.date, desc: t.desc, amount: t.amount, note: nextNote });
+  }, [isOneTimeTxn, setOneTimes, updateTxn, src]);
+
+  const requestDeleteTxn = useCallback((t) => {
+    setPendingDelete({ id: t.id, desc: t.desc || "Transaction", date: t.date || "", amount: Number(t.amount) || 0 });
+  }, []);
+
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {splitTxn && <SplitModal txn={splitTxn} src={src} onClose={() => setSplitTxn(null)}/>}
+      {pendingDelete && (
+        <div style={{position:"fixed",inset:0,background:"#000000aa",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={e => { if (e.target === e.currentTarget) setPendingDelete(null); }}>
+          <div style={{width:"100%",maxWidth:420,background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:14,padding:"16px 16px 14px"}}>
+            <div style={{fontSize:16,fontWeight:800,color:TEXT,marginBottom:8}}>Delete transaction?</div>
+            <div style={{fontSize:12,color:MUTED,lineHeight:1.5,marginBottom:12}}>
+              {pendingDelete.date ? `${pendingDelete.date} · ` : ""}{pendingDelete.desc} · {money2(pendingDelete.amount)}
+            </div>
+            <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+              <button onClick={() => setPendingDelete(null)}
+                style={{padding:"7px 12px",borderRadius:8,background:BG,color:MUTED,border:`1px solid ${BORDER}`,fontSize:12,fontWeight:700}}>Cancel</button>
+              <button onClick={() => {
+                deleteTxn(src, pendingDelete.id, { force: true });
+                setPendingDelete(null);
+                setOpenMenuId(null);
+              }}
+                style={{padding:"7px 12px",borderRadius:8,background:"#ef4444",color:"white",border:"none",fontSize:12,fontWeight:800}}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Manual add */}
       <div style={{display:"flex",justifyContent:"flex-end"}}>
@@ -2092,35 +2210,48 @@ function TxnTable({ src, isMobile }) {
           {showAdd ? "✕ Cancel" : "+ Add Transaction"}
         </button>
       </div>
+      {addFeedback && (
+        <div style={{
+          fontSize:12,
+          borderRadius:8,
+          padding:"8px 10px",
+          background:addFeedback.type==="error" ? "#ef444411" : "#22c55e11",
+          color:addFeedback.type==="error" ? "#ef4444" : "#22c55e",
+          border:`1px solid ${addFeedback.type==="error" ? "#ef444433" : "#22c55e33"}`,
+          display:"flex",
+          alignItems:"center",
+          justifyContent:"space-between",
+          gap:8,
+        }}>
+          <span>{addFeedback.text}</span>
+          <button onClick={() => setAddFeedback(null)}
+            style={{background:"transparent",border:`1px solid ${addFeedback.type==="error" ? "#ef444455" : "#22c55e55"}`,borderRadius:6,color:addFeedback.type==="error" ? "#ef4444" : "#22c55e",fontSize:11,padding:"2px 7px",cursor:"pointer"}}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {showAdd && (
         <Card glow={ACCENT}>
           <Label>➕ New Transaction</Label>
           <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"flex-end"}}>
-            <div style={{display:"flex",flexDirection:"column",gap:4,flex:"0 0 auto"}}>
-              <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Month</span>
-              <select value={newMon} onChange={e=>setNewMon(e.target.value)}
-                style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none"}}>
-                {MONTHS.map(m=><option key={m}>{m}</option>)}
-              </select>
-            </div>
             <div style={{display:"flex",flexDirection:"column",gap:4,flex:"0 0 140px"}}>
               <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Date</span>
-              <input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)}
-                style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%",colorScheme:"dark"}}/>
+              <input type="date" value={newDate} onChange={e=>{ setNewDate(e.target.value); if (addFeedback) setAddFeedback(null); }}
+                style={{background:BG,border:`1px solid ${addAttempted && !newDate ? "#ef4444" : BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%",colorScheme:"dark"}}/>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:4,flex:"1 1 160px"}}>
               <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Description</span>
-              <input value={newDesc} onChange={e=>setNewDesc(e.target.value)} placeholder="Merchant or payee"
-                style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+              <input value={newDesc} onChange={e=>{ setNewDesc(e.target.value); if (addFeedback) setAddFeedback(null); }} placeholder="Merchant or payee"
+                style={{background:BG,border:`1px solid ${addAttempted && !newDesc.trim() ? "#ef4444" : BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:4,flex:"0 0 100px"}}>
               <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Amount ($)</span>
-              <input type="number" value={newAmt} onChange={e=>setNewAmt(e.target.value)} placeholder="0.00" step="0.01"
-                style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+              <input type="number" value={newAmt} onChange={e=>{ setNewAmt(e.target.value); if (addFeedback) setAddFeedback(null); }} placeholder="0.00" step="0.01"
+                style={{background:BG,border:`1px solid ${addAttempted && Number.isNaN(parseFloat(newAmt)) ? "#ef4444" : BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:4,flex:"1 1 140px"}}>
               <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Category</span>
-              <select value={newCat} onChange={e=>setNewCat(e.target.value)}
+              <select value={newCat} onChange={e=>{ setNewCat(e.target.value); if (addFeedback) setAddFeedback(null); }}
                 style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}>
                 {allCats.map(c=><option key={c}>{c}</option>)}
               </select>
@@ -2130,7 +2261,7 @@ function TxnTable({ src, isMobile }) {
               Save
             </button>
           </div>
-          <div style={{fontSize:11,color:MUTED,marginTop:8}}>Tip: use a negative amount for credits/refunds.</div>
+          <div style={{fontSize:11,color:MUTED,marginTop:8}}>Date is required and determines the month automatically. Use a negative amount for credits/refunds.</div>
         </Card>
       )}
 
@@ -2157,14 +2288,18 @@ function TxnTable({ src, isMobile }) {
           </select>
           <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
             style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,flex:"0 0 auto"}}>
-            <option value="date">By Date</option>
-            <option value="amount">By Amount</option>
+            <option value="date_desc">Date (newest)</option>
+            <option value="date_asc">Date (oldest)</option>
+            <option value="amount_desc">Amount (high)</option>
+            <option value="amount_asc">Amount (low)</option>
+            <option value="desc_asc">Description (A-Z)</option>
+            <option value="desc_desc">Description (Z-A)</option>
           </select>
         </div>
         <div style={{fontSize:12,color:MUTED,marginTop:8}}>
           {filtered.length === 0
             ? <span style={{color:"#f59e0b"}}>No transactions for {monthFilter} — import a statement to add data</span>
-            : <>{filtered.length} transactions · <span style={{color:"#f97316",fontWeight:700}}>{fmt(visibleTotal)}</span></>
+            : <>{filtered.length} transactions · <span style={{color:"#f97316",fontWeight:700}}>{money2(visibleTotal)}</span></>
           }
         </div>
       </Card>
@@ -2177,9 +2312,10 @@ function TxnTable({ src, isMobile }) {
               const isIncome   = t.cat==="Income";
               const isTransfer = t.cat==="Transfer";
               const isReturn   = t.amount<0;
-              const isOneTime  = t.note?.includes("ONE-TIME");
+              const isOneTime  = isOneTimeTxn(t);
               const catColor   = catColorsAll[t.cat]||MUTED;
               const amtColor   = isIncome?"#22c55e":isReturn?"#22c55e":isTransfer?MUTED:TEXT;
+              const useCompactActions = !!mobileTxnActionMenu;
 
               return (
                 <div key={i} style={{
@@ -2193,21 +2329,79 @@ function TxnTable({ src, isMobile }) {
                     <span style={{fontSize:12,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{t.date}</span>
                     <div style={{display:"flex",gap:6,alignItems:"center"}}>
                       <CatSelect t={t} src={src} updateTxnCat={updateTxnCat}/>
-                      <button onClick={() => editId===t.id ? saveEdit() : beginEdit(t)} title="Edit"
-                        style={{background:"#22c55e15",border:"none",borderRadius:4,color:"#22c55e",fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>
-                        {editId===t.id ? "Save" : "Edit"}
-                      </button>
-                      {editId===t.id && (
-                        <button onClick={cancelEdit} title="Cancel"
-                          style={{background:"#33415522",border:"none",borderRadius:4,color:MUTED,fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>Cancel</button>
+                      {useCompactActions ? (
+                        <div style={{position:"relative"}}>
+                          <button onClick={() => setOpenMenuId(prev => prev===t.id ? null : t.id)}
+                            style={{background:"#33415522",border:`1px solid ${BORDER}`,borderRadius:6,color:MUTED,fontSize:11,cursor:"pointer",padding:"2px 8px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>
+                            Options
+                          </button>
+                          {openMenuId === t.id && (
+                            <div style={{position:"absolute",right:0,top:26,zIndex:20,background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:8,padding:6,minWidth:132,display:"flex",flexDirection:"column",gap:4,boxShadow:"0 10px 22px #0008"}}>
+                              <button onClick={() => { editId===t.id ? saveEdit() : beginEdit(t); if (editId===t.id) setOpenMenuId(null); }}
+                                style={{background:"#22c55e15",border:"none",borderRadius:5,color:"#22c55e",fontSize:11,cursor:"pointer",padding:"5px 8px",textAlign:"left",fontWeight:700}}>
+                                {editId===t.id ? "Save edit" : "Edit"}
+                              </button>
+                              {editId===t.id && (
+                                <button onClick={() => { cancelEdit(); setOpenMenuId(null); }}
+                                  style={{background:"#33415522",border:"none",borderRadius:5,color:MUTED,fontSize:11,cursor:"pointer",padding:"5px 8px",textAlign:"left",fontWeight:700}}>
+                                  Cancel edit
+                                </button>
+                              )}
+                              {!isIncome && !isTransfer && (
+                                <button onClick={() => { setSplitTxn(t); setOpenMenuId(null); }}
+                                  style={{background:"#06b6d415",border:"none",borderRadius:5,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"5px 8px",textAlign:"left",fontWeight:700}}>
+                                  Split
+                                </button>
+                              )}
+                              {!isIncome && !isTransfer && (
+                                <button onClick={() => { toggleOneTimeTxn(t); setOpenMenuId(null); }}
+                                  style={{background:isOneTime?"#f59e0b22":"#33415522",border:"none",borderRadius:5,color:isOneTime?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"5px 8px",textAlign:"left",fontWeight:700}}>
+                                  {isOneTime ? "Unmark one-time" : "Mark one-time"}
+                                </button>
+                              )}
+                              <button onClick={() => { toggleTxnTagging(src, t.id); setOpenMenuId(null); }}
+                                style={{background:t.excludeFromTags?"#f59e0b22":"#33415522",border:"none",borderRadius:5,color:t.excludeFromTags?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"5px 8px",textAlign:"left",fontWeight:700}}>
+                                {t.excludeFromTags ? "Enable tagging" : "Exclude from tags"}
+                              </button>
+                              <button onClick={() => {
+                                requestDeleteTxn(t);
+                                setOpenMenuId(null);
+                              }}
+                                style={{background:"#ef444415",border:"none",borderRadius:5,color:"#ef4444",fontSize:11,cursor:"pointer",padding:"5px 8px",textAlign:"left",fontWeight:700}}>
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          <button onClick={() => editId===t.id ? saveEdit() : beginEdit(t)} title="Edit"
+                            style={{background:"#22c55e15",border:"none",borderRadius:4,color:"#22c55e",fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>
+                            {editId===t.id ? "Save" : "Edit"}
+                          </button>
+                          {editId===t.id && (
+                            <button onClick={cancelEdit} title="Cancel"
+                              style={{background:"#33415522",border:"none",borderRadius:4,color:MUTED,fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>Cancel</button>
+                          )}
+                          {!isIncome && !isTransfer && (
+                            <button onClick={() => setSplitTxn(t)} title="Split"
+                              style={{background:"#06b6d415",border:"none",borderRadius:4,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>Split</button>
+                          )}
+                          {!isIncome && !isTransfer && (
+                            <button onClick={() => toggleOneTimeTxn(t)} title={isOneTime ? "Unmark one-time" : "Mark one-time"}
+                              style={{background:isOneTime?"#f59e0b22":"#33415522",border:"none",borderRadius:4,color:isOneTime?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>
+                              One-time
+                            </button>
+                          )}
+                          <button onClick={() => toggleTxnTagging(src, t.id)} title={t.excludeFromTags ? "Include in tagging" : "Exclude from tagging"}
+                            style={{background:t.excludeFromTags?"#f59e0b22":"#33415522",border:"none",borderRadius:4,color:t.excludeFromTags?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>
+                            {t.excludeFromTags ? "NoTag" : "Tag"}
+                          </button>
+                          <button onClick={() => requestDeleteTxn(t)}
+                            title="Delete transaction"
+                            style={{background:"#ef444415",border:"none",borderRadius:4,color:"#ef4444",fontSize:12,cursor:"pointer",padding:"1px 5px",lineHeight:1.5,flexShrink:0}}>Del</button>
+                        </>
                       )}
-                      {!isIncome && !isTransfer && (
-                        <button onClick={() => setSplitTxn(t)} title="Split"
-                          style={{background:"#06b6d415",border:"none",borderRadius:4,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>✂</button>
-                      )}
-                      <button onClick={() => deleteTxn(src, t.id)}
-                        title="Delete transaction"
-                        style={{background:"#ef444415",border:"none",borderRadius:4,color:"#ef4444",fontSize:12,cursor:"pointer",padding:"1px 5px",lineHeight:1.5,flexShrink:0}}>✕</button>
                     </div>
                   </div>
                   {/* Bottom row: description + amount */}
@@ -2231,6 +2425,7 @@ function TxnTable({ src, isMobile }) {
                           <div style={{fontSize:14,fontWeight:500,color:isIncome?"#22c55e":TEXT,lineHeight:1.3}}>
                             {t.desc}
                             {isOneTime&&<span style={{marginLeft:6}}><Tag color="#f59e0b">one-time</Tag></span>}
+                            {t.excludeFromTags&&<span style={{marginLeft:6}}><Tag color="#f59e0b">excluded</Tag></span>}
                           </div>
                           {t.note&&!t.note.includes("ONE-TIME")&&(
                             <div style={{fontSize:11,color:DIM,marginTop:2}}>{t.note}</div>
@@ -2239,7 +2434,7 @@ function TxnTable({ src, isMobile }) {
                       )}
                     </div>
                     <div style={{fontSize:16,fontWeight:800,color:amtColor,fontVariantNumeric:"tabular-nums",flexShrink:0}}>
-                      {isIncome||isReturn?"+":""}{fmt(t.amount)}
+                      {isIncome||isReturn?"+":""}{money2(t.amount)}
                     </div>
                   </div>
                 </div>
@@ -2247,24 +2442,24 @@ function TxnTable({ src, isMobile }) {
             })}
             <div style={{padding:"12px 16px",background:"#0f141e",borderTop:`2px solid ${BORDER}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <span style={{fontSize:13,fontWeight:700,color:MUTED}}>Total spend</span>
-              <span style={{fontSize:16,fontWeight:900,color:"#f97316",fontVariantNumeric:"tabular-nums"}}>{fmt(visibleTotal)}</span>
+              <span style={{fontSize:16,fontWeight:900,color:"#f97316",fontVariantNumeric:"tabular-nums"}}>{money2(visibleTotal)}</span>
             </div>
           </>
         ) : (
           /* ── DESKTOP: 4-col table ── */
           <>
-            <div style={{display:"grid",gridTemplateColumns:"60px 1fr 96px 150px 118px 56px",padding:"10px 16px",background:BG,borderBottom:`1px solid ${BORDER}`}}>
+            <div style={{display:"grid",gridTemplateColumns:"60px 1fr 110px 170px 170px 60px",padding:"10px 16px",background:BG,borderBottom:`1px solid ${BORDER}`}}>
               {["Date","Description","Amount","Category","",""].map(h=>(
                 <div key={h} style={{fontSize:11,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:".5px"}}>{h}</div>
               ))}
             </div>
             {filtered.map((t,i)=>{
               const isIncome=t.cat==="Income", isTransfer=t.cat==="Transfer", isReturn=t.amount<0;
-              const isOneTime=t.note?.includes("ONE-TIME");
+              const isOneTime=isOneTimeTxn(t);
               const catColor=catColorsAll[t.cat]||MUTED;
               const isEditing = editId === t.id;
               return (
-                <div key={i} style={{display:"grid",gridTemplateColumns:"60px 1fr 96px 150px 118px 56px",padding:"10px 16px",borderBottom:`1px solid ${BORDER}`,background:isIncome?"#22c55e07":isTransfer?"#33415507":i%2===0?SURFACE:BG,opacity:isTransfer?.5:1}}>
+                <div key={i} style={{display:"grid",gridTemplateColumns:"60px 1fr 110px 170px 170px 60px",padding:"10px 16px",borderBottom:`1px solid ${BORDER}`,background:isIncome?"#22c55e07":isTransfer?"#33415507":i%2===0?SURFACE:BG,opacity:isTransfer?.5:1}}>
                   <div style={{fontSize:12,color:MUTED,alignSelf:"center"}}>
                     {isEditing
                       ? <input value={editDraft.date} onChange={e=>setEditDraft(d=>({...d,date:e.target.value}))} placeholder="MM/DD"
@@ -2283,6 +2478,7 @@ function TxnTable({ src, isMobile }) {
                       <>
                         <div style={{fontSize:13,color:isIncome?"#22c55e":TEXT,fontWeight:isIncome?700:400,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                           {t.desc}{isOneTime&&<Tag color="#f59e0b">one-time</Tag>}
+                          {t.excludeFromTags&&<Tag color="#f59e0b">excluded</Tag>}
                         </div>
                         {t.note&&!t.note.includes("ONE-TIME")&&<div style={{fontSize:11,color:DIM,marginTop:2}}>{t.note}</div>}
                       </>
@@ -2292,17 +2488,29 @@ function TxnTable({ src, isMobile }) {
                     {isEditing
                       ? <input type="number" step="0.01" value={editDraft.amount} onChange={e=>setEditDraft(d=>({...d,amount:e.target.value}))}
                           style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
-                      : <>{isIncome||isReturn?"+":""}{fmt(t.amount)}</>}
+                      : <>{isIncome||isReturn?"+":""}{money2(t.amount)}</>}
                   </div>
                   <div style={{alignSelf:"center"}}><CatSelect t={t} src={src} updateTxnCat={updateTxnCat}/></div>
-                  <div style={{alignSelf:"center",display:"flex",gap:6,justifyContent:"flex-start",whiteSpace:"nowrap"}}>
+                  <div style={{alignSelf:"center",display:"flex",gap:5,justifyContent:"flex-start",whiteSpace:"nowrap",flexWrap:"wrap"}}>
                     <button onClick={() => isEditing ? saveEdit() : beginEdit(t)} title="Edit"
-                      style={{background:"#22c55e15",border:"none",borderRadius:4,color:"#22c55e",fontSize:11,cursor:"pointer",padding:"2px 8px",lineHeight:1.5,fontWeight:700}}>
+                      style={{background:"#22c55e15",border:"none",borderRadius:4,color:"#22c55e",fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>
                       {isEditing ? "Save" : "Edit"}
                     </button>
                     {!isIncome && !isTransfer && (
                       <button onClick={() => setSplitTxn(t)} title="Split transaction"
-                        style={{background:"#06b6d415",border:"none",borderRadius:4,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"2px 8px",lineHeight:1.5,fontWeight:700}}>Split</button>
+                        style={{background:"#06b6d415",border:"none",borderRadius:4,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>Split</button>
+                    )}
+                    {!isEditing && (
+                      <button onClick={() => toggleTxnTagging(src, t.id)} title={t.excludeFromTags ? "Include in tagging" : "Exclude from tagging"}
+                        style={{background:t.excludeFromTags?"#f59e0b22":"#33415522",border:"none",borderRadius:4,color:t.excludeFromTags?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>
+                        {t.excludeFromTags ? "NoTag" : "Tag"}
+                      </button>
+                    )}
+                    {!isIncome && !isTransfer && !isEditing && (
+                      <button onClick={() => toggleOneTimeTxn(t)} title={isOneTime ? "Unmark one-time" : "Mark one-time"}
+                        style={{background:isOneTime?"#f59e0b22":"#33415522",border:"none",borderRadius:4,color:isOneTime?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>
+                        One-time
+                      </button>
                     )}
                   </div>
                   <div style={{alignSelf:"center"}}>
@@ -2310,17 +2518,17 @@ function TxnTable({ src, isMobile }) {
                       <button onClick={cancelEdit} title="Cancel edit"
                         style={{background:"#33415522",border:"none",borderRadius:4,color:MUTED,fontSize:11,cursor:"pointer",padding:"2px 6px",lineHeight:1.5,fontWeight:700}}>Cancel</button>
                     ) : (
-                      <button onClick={() => deleteTxn(src, t.id)} title="Delete"
+                      <button onClick={() => requestDeleteTxn(t)} title="Delete"
                         style={{background:"#ef444415",border:"none",borderRadius:4,color:"#ef4444",fontSize:13,cursor:"pointer",padding:"2px 6px",lineHeight:1.5}}>Del</button>
                     )}
                   </div>
                 </div>
               );
             })}
-            <div style={{display:"grid",gridTemplateColumns:"60px 1fr 96px 150px 118px 56px",padding:"12px 16px",background:"#0f141e",borderTop:`2px solid ${BORDER}`}}>
+            <div style={{display:"grid",gridTemplateColumns:"60px 1fr 110px 170px 170px 60px",padding:"12px 16px",background:"#0f141e",borderTop:`2px solid ${BORDER}`}}>
               <div/>
               <div style={{fontSize:13,fontWeight:700,color:MUTED}}>Total spend (excl. income & transfers)</div>
-              <div style={{fontSize:15,fontWeight:900,color:"#f97316",fontVariantNumeric:"tabular-nums"}}>{fmt(visibleTotal)}</div>
+              <div style={{fontSize:15,fontWeight:900,color:"#f97316",fontVariantNumeric:"tabular-nums"}}>{money2(visibleTotal)}</div>
               <div/><div/><div/>
             </div>
           </>
@@ -2331,6 +2539,367 @@ function TxnTable({ src, isMobile }) {
 }
 
 // ── RECOMMENDATIONS ───────────────────────────────────────────────────────────
+
+function TransactionsPage({ isMobile }) {
+  const [source, setSource] = useState("checking");
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      <Card>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+          <Label>Transactions</Label>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>setSource("checking")} style={{
+              padding:"6px 12px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",
+              background:source==="checking"?ACCENT+"22":BG,color:source==="checking"?ACCENT:MUTED,
+              border:`1px solid ${source==="checking"?ACCENT:BORDER}`
+            }}>Checking</button>
+            <button onClick={()=>setSource("cc")} style={{
+              padding:"6px 12px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",
+              background:source==="cc"?ACCENT+"22":BG,color:source==="cc"?ACCENT:MUTED,
+              border:`1px solid ${source==="cc"?ACCENT:BORDER}`
+            }}>Credit Card</button>
+          </div>
+        </div>
+      </Card>
+      <TxnTable src={source} isMobile={isMobile}/>
+    </div>
+  );
+}
+
+function IncomePage({ wide }) {
+  const { checkTxns, ccTxns, selectedMonth, availableMonths, takeHome } = useBudget();
+  const allIncomeTxns = [...checkTxns, ...ccTxns].filter(t => t.cat === "Income");
+  const hasRealIncome = allIncomeTxns.length > 0;
+  const demoBase = takeHome > 0 ? takeHome : 7862;
+  const demoMonthIncomeTxns = [
+    { desc: "Primary Job", amount: Math.round(demoBase * 0.82), month: selectedMonth },
+    { desc: "Side Income", amount: Math.round(demoBase * 0.12), month: selectedMonth },
+    { desc: "Other Income", amount: Math.round(demoBase * 0.06), month: selectedMonth },
+  ];
+  const monthIncomeTxns = hasRealIncome
+    ? allIncomeTxns.filter(t => t.month === selectedMonth)
+    : demoMonthIncomeTxns;
+  const monthIncome = monthIncomeTxns.reduce((s,t)=>s+t.amount,0);
+  const sourceRows = Object.entries(monthIncomeTxns.reduce((acc,t)=>{ acc[t.desc]=(acc[t.desc]||0)+t.amount; return acc; }, {}))
+    .map(([name,total])=>({name,total})).sort((a,b)=>b.total-a.total);
+  const monthSeries = hasRealIncome
+    ? availableMonths.map(m => {
+        const total = allIncomeTxns.filter(t => t.month === m).reduce((s,t)=>s+t.amount,0);
+        return { month: m.slice(0,3), total };
+      })
+    : APP_MONTHS.map((m, idx) => ({ month: m.slice(0,3), total: Math.round(demoBase * (0.94 + ((idx % 4) * 0.03))) }));
+  const avgIncome = monthSeries.length ? monthSeries.reduce((s,m)=>s+m.total,0)/monthSeries.length : 0;
+  const delta = monthIncome - takeHome;
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <Card glow="#22c55e">
+        <Label>Income Overview � {selectedMonth}</Label>
+        {!hasRealIncome && (
+          <div style={{fontSize:11,color:"#f59e0b",marginBottom:8}}>Showing sample income data until income transactions are added.</div>
+        )}
+        <div style={{display:"grid",gridTemplateColumns:wide?"repeat(4,1fr)":"1fr 1fr",gap:10}}>
+          {[["This month",fmt(monthIncome),"#22c55e"],["Take-home target",fmt(takeHome),ACCENT],["Avg monthly",fmt(avgIncome),"#06b6d4"],["Delta",`${delta>=0?"+":"-"}${fmt(Math.abs(delta))}`,delta>=0?"#22c55e":"#ef4444"]].map(([k,v,c])=>(
+            <div key={k} style={{background:BG,borderRadius:10,padding:"10px 12px"}}>
+              <div style={{fontSize:10,color:MUTED,marginBottom:3}}>{k}</div>
+              <div style={{fontSize:16,fontWeight:900,color:c,fontVariantNumeric:"tabular-nums"}}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+      <Card>
+        <Label>Income Trend</Label>
+        <ResponsiveContainer width="100%" height={180}>
+          <BarChart data={monthSeries} margin={{left:8,right:8,top:12,bottom:0}}>
+            <XAxis dataKey="month" tick={{fontSize:10,fill:MUTED}} axisLine={false} tickLine={false}/>
+            <YAxis tick={{fontSize:10,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`${Math.round(v)}`}/>
+            <Tooltip content={<Tip/>}/>
+            <Bar dataKey="total" fill="#22c55e" radius={[6,6,0,0]}/>
+            <ReferenceLine y={takeHome} stroke={ACCENT} strokeDasharray="4 3"/>
+          </BarChart>
+        </ResponsiveContainer>
+      </Card>
+      <Card>
+        <Label>Income Sources � {selectedMonth}</Label>
+        {sourceRows.length===0 ? <div style={{fontSize:13,color:MUTED}}>No income transactions yet for this month.</div> : sourceRows.map((r,i)=>(
+          <div key={r.name+i} style={{display:"flex",justifyContent:"space-between",padding:"8px 2px",borderBottom:`1px solid ${i===sourceRows.length-1?"transparent":BORDER}`}}>
+            <span style={{fontSize:13,color:TEXT}}>{r.name}</span>
+            <span style={{fontSize:14,fontWeight:800,color:"#22c55e",fontVariantNumeric:"tabular-nums"}}>{fmt(r.total)}</span>
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+function MealPlanningPage({ wide }) {
+  const { checkTxns, ccTxns, selectedMonth } = useBudget();
+  const [weeklyBudget, setWeeklyBudget] = useState(() => Number(ls.get("budget_mealWeeklyBudget") || 250));
+  const [listByMonth, setListByMonth] = useState(() => ls.getJSON("budget_mealListsByMonth", {}));
+  const [householdSize, setHouseholdSize] = useState(() => Number(ls.get("budget_meal_household") || 4));
+  const [planDays, setPlanDays] = useState(() => Number(ls.get("budget_meal_days") || 7));
+  const [mealStyle, setMealStyle] = useState(() => ls.get("budget_meal_style") || "family-friendly, balanced");
+  const [storeText, setStoreText] = useState(() => ls.get("budget_meal_stores") || "Walmart, Aldi, Costco");
+  const [goalText, setGoalText] = useState(() => ls.get("budget_meal_goals") || "high protein dinners, simple lunches, low waste");
+  const [generating, setGenerating] = useState(false);
+  const [planErr, setPlanErr] = useState(null);
+  const [aiPlanByMonth, setAiPlanByMonth] = useState(() => ls.getJSON("budget_meal_ai_plan_by_month", {}));
+  const [aiResponsesByMonth, setAiResponsesByMonth] = useState(() => ls.getJSON("budget_meal_ai_responses_by_month", {}));
+
+  useEffect(() => { ls.set("budget_mealWeeklyBudget", String(weeklyBudget)); }, [weeklyBudget]);
+  useEffect(() => { ls.setJSON("budget_mealListsByMonth", listByMonth); }, [listByMonth]);
+  useEffect(() => { ls.set("budget_meal_household", String(householdSize)); }, [householdSize]);
+  useEffect(() => { ls.set("budget_meal_days", String(planDays)); }, [planDays]);
+  useEffect(() => { ls.set("budget_meal_style", mealStyle); }, [mealStyle]);
+  useEffect(() => { ls.set("budget_meal_stores", storeText); }, [storeText]);
+  useEffect(() => { ls.set("budget_meal_goals", goalText); }, [goalText]);
+  useEffect(() => { ls.setJSON("budget_meal_ai_plan_by_month", aiPlanByMonth); }, [aiPlanByMonth]);
+  useEffect(() => { ls.setJSON("budget_meal_ai_responses_by_month", aiResponsesByMonth); }, [aiResponsesByMonth]);
+
+  const foodTxns = [...checkTxns, ...ccTxns].filter(t => t.month===selectedMonth && (t.cat==="Groceries" || t.cat==="Dining Out"));
+  const grocery = foodTxns.filter(t=>t.cat==="Groceries").reduce((s,t)=>s+t.amount,0);
+  const dining = foodTxns.filter(t=>t.cat==="Dining Out").reduce((s,t)=>s+t.amount,0);
+  const total = grocery + dining;
+  const plannedMonth = weeklyBudget * 4.33;
+  const remaining = plannedMonth - total;
+  const spentPct = plannedMonth > 0 ? Math.min(100, (total / plannedMonth) * 100) : 0;
+  const stores = storeText.split(",").map(x=>x.trim()).filter(Boolean);
+  const activePlan = aiPlanByMonth[selectedMonth] || null;
+  const activeResponses = aiResponsesByMonth[selectedMonth] || [];
+  const aiMonthlyEstimate = Number(activePlan?.estimated_monthly_total || 0);
+  const aiDelta = plannedMonth - aiMonthlyEstimate;
+
+  const generatePlan = async () => {
+    if (!ANTHROPIC_API_KEY) { setPlanErr("Add an Anthropic API key in Settings to use AI meal planning."); return; }
+    setGenerating(true);
+    setPlanErr(null);
+    try {
+      const prompt = `Create a practical grocery meal plan JSON for a US household.
+Month: ${selectedMonth}
+Household size: ${householdSize}
+Planning days: ${planDays}
+Weekly budget target: $${weeklyBudget}
+Monthly budget target: $${plannedMonth.toFixed(2)}
+Current groceries + dining spend this month: $${total.toFixed(2)}
+Remaining budget for this month: $${Math.max(0, remaining).toFixed(2)}
+Preferred stores: ${stores.join(", ") || "Any major US grocery stores"}
+Meal style: ${mealStyle}
+Goals: ${goalText}
+Notes from user for this month: ${(listByMonth[selectedMonth] || "None").trim() || "None"}
+
+Use realistic US grocery price estimates based on recent market averages. For each grocery item include estimated prices by listed store, quantity, and which store is cheapest.
+Hard constraints:
+1) Keep estimated_monthly_total at or below the Monthly budget target.
+2) If the target is tight, reduce complexity and choose lower-cost ingredients first.
+3) Prioritize reusing ingredients across meals to cut waste and stay under budget.
+4) Include concise substitutions for expensive items.
+
+Return ONLY valid JSON with this shape:
+{
+  "summary": "short summary",
+  "estimated_weekly_total": number,
+  "estimated_monthly_total": number,
+  "meals": [{"day":"Mon","breakfast":"...","lunch":"...","dinner":"..."}],
+  "grocery_items": [
+    {"item":"Chicken breast","quantity":"4 lb","category":"Protein","store_costs":{"Walmart":14.5,"Aldi":13.2},"best_store":"Aldi","best_cost":13.2,"meal_usage":"2 dinners + 1 lunch"}
+  ],
+  "prep_tips": ["..."],
+  "waste_reduction_tips": ["..."]
+}`;
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_API_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:3000, messages:[{role:"user",content:prompt}] }),
+      });
+      const data = await res.json();
+      const raw = data.content?.[0]?.text || "";
+      const parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
+      setAiPlanByMonth(prev => ({ ...prev, [selectedMonth]: parsed }));
+      setAiResponsesByMonth(prev => ({
+        ...prev,
+        [selectedMonth]: [
+          {
+            at: new Date().toISOString(),
+            prompt,
+            response: raw.trim(),
+            summary: parsed?.summary || "AI meal plan response",
+          },
+          ...(prev[selectedMonth] || []),
+        ].slice(0, 6),
+      }));
+    } catch (e) {
+      setPlanErr("Could not generate meal plan. Please try again.");
+    }
+    setGenerating(false);
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <Card glow="#22c55e">
+        <Label>Meal Planner · {selectedMonth}</Label>
+        <div style={{display:"grid",gridTemplateColumns:wide?"repeat(4,1fr)":"1fr 1fr",gap:10}}>
+          {[["Groceries",fmt(grocery),"#f97316"],["Dining out",fmt(dining),"#10b981"],["Food total",fmt(total),TEXT],["Vs plan",`${remaining>=0?"+":"−"}${fmt(Math.abs(remaining))}`,remaining>=0?"#22c55e":"#ef4444"]].map(([k,v,c])=>(
+            <div key={k} style={{background:BG,borderRadius:10,padding:"10px 12px"}}>
+              <div style={{fontSize:10,color:MUTED,marginBottom:3}}>{k}</div>
+              <div style={{fontSize:16,fontWeight:900,color:c,fontVariantNumeric:"tabular-nums"}}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        <Label>Monthly Target Tracking</Label>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,gap:8,flexWrap:"wrap"}}>
+          <div style={{fontSize:12,color:MUTED}}>Auto-updates as new transactions are added or deleted.</div>
+          <div style={{fontSize:12,fontWeight:800,color:remaining>=0?"#22c55e":"#ef4444"}}>
+            {remaining>=0 ? `${fmt(remaining)} remaining` : `${fmt(Math.abs(remaining))} over target`}
+          </div>
+        </div>
+        <PBar pct={spentPct} color={remaining>=0?"#22c55e":"#ef4444"} h={7}/>
+        <div style={{display:"grid",gridTemplateColumns:wide?"repeat(4,1fr)":"1fr 1fr",gap:8,marginTop:10}}>
+          {[
+            ["Monthly target", fmt(plannedMonth), ACCENT],
+            ["Spent so far", fmt(total), TEXT],
+            ["AI est. month", aiMonthlyEstimate>0 ? fmt(aiMonthlyEstimate) : "—", aiDelta>=0?"#22c55e":"#ef4444"],
+            ["AI vs target", aiMonthlyEstimate>0 ? `${aiDelta>=0?"+":"−"}${fmt(Math.abs(aiDelta))}` : "—", aiDelta>=0?"#22c55e":"#ef4444"],
+          ].map(([k,v,c]) => (
+            <div key={k} style={{background:BG,borderRadius:9,padding:"8px 10px"}}>
+              <div style={{fontSize:10,color:MUTED,marginBottom:3}}>{k}</div>
+              <div style={{fontSize:14,fontWeight:900,color:c,fontVariantNumeric:"tabular-nums"}}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        <Label>AI Grocery + Meal Plan</Label>
+        <div style={{fontSize:12,color:MUTED,marginBottom:10}}>Generates a weekly meal plan, grocery list, and estimated item costs by selected stores using AI estimates.</div>
+        <div style={{display:"grid",gridTemplateColumns:wide?"repeat(2,1fr)":"1fr",gap:10}}>
+          <div>
+            <div style={{fontSize:11,color:MUTED,marginBottom:4}}>Weekly budget</div>
+            <input type="number" value={weeklyBudget} onChange={e=>setWeeklyBudget(Math.max(0, Number(e.target.value)||0))} placeholder="e.g. 250" style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 10px",color:TEXT,fontSize:13,width:"100%"}}/>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:MUTED,marginBottom:4}}>Household size</div>
+            <input type="number" value={householdSize} onChange={e=>setHouseholdSize(Math.max(1, Number(e.target.value)||1))} placeholder="People eating these meals" style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 10px",color:TEXT,fontSize:13,width:"100%"}}/>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:MUTED,marginBottom:4}}>Plan days</div>
+            <input type="number" value={planDays} onChange={e=>setPlanDays(Math.max(1, Math.min(14, Number(e.target.value)||7)))} placeholder="How many days to plan" style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 10px",color:TEXT,fontSize:13,width:"100%"}}/>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:MUTED,marginBottom:4}}>Stores</div>
+            <input value={storeText} onChange={e=>setStoreText(e.target.value)} placeholder="Walmart, Aldi, Costco" style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 10px",color:TEXT,fontSize:13,width:"100%"}}/>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:MUTED,marginBottom:4}}>Meal style</div>
+            <input value={mealStyle} onChange={e=>setMealStyle(e.target.value)} placeholder="family-friendly, balanced" style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 10px",color:TEXT,fontSize:13,width:"100%"}}/>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:MUTED,marginBottom:4}}>Goals / constraints</div>
+            <input value={goalText} onChange={e=>setGoalText(e.target.value)} placeholder="high protein dinners, simple lunches, low waste" style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 10px",color:TEXT,fontSize:13,width:"100%"}}/>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center",marginTop:12,flexWrap:"wrap"}}>
+          <button onClick={generatePlan} disabled={generating} style={{padding:"8px 14px",borderRadius:9,background:generating?"#334155":"#22c55e22",color:generating?MUTED:"#22c55e",border:`1px solid ${generating?"#334155":"#22c55e55"}`,fontWeight:800,fontSize:12,cursor:generating?"wait":"pointer"}}>
+            {generating ? "Generating..." : "Generate AI Meal Plan"}
+          </button>
+          <span style={{fontSize:12,color:MUTED}}>Monthly target from weekly budget: <strong style={{color:ACCENT}}>{fmt(plannedMonth)}</strong></span>
+        </div>
+        {planErr && <div style={{fontSize:12,color:"#f59e0b",marginTop:10}}>{planErr}</div>}
+      </Card>
+
+      {activePlan && (
+        <>
+          <Card>
+            <Label>Plan Summary</Label>
+            <div style={{fontSize:13,color:MUTED,marginBottom:8}}>{activePlan.summary || "AI meal plan"}</div>
+            <div style={{display:"grid",gridTemplateColumns:wide?"repeat(3,1fr)":"1fr 1fr",gap:10}}>
+              {[
+                ["AI weekly estimate", fmt(activePlan.estimated_weekly_total || 0), "#22c55e"],
+                ["AI monthly estimate", fmt(activePlan.estimated_monthly_total || 0), "#06b6d4"],
+                ["Your weekly target", fmt(weeklyBudget), ACCENT]
+              ].map(([k,v,c])=>(
+                <div key={k} style={{background:BG,borderRadius:10,padding:"10px 12px"}}>
+                  <div style={{fontSize:10,color:MUTED,marginBottom:3}}>{k}</div>
+                  <div style={{fontSize:16,fontWeight:900,color:c,fontVariantNumeric:"tabular-nums"}}>{v}</div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card>
+            <Label>Weekly Meals</Label>
+            {(activePlan.meals || []).length===0 ? <div style={{fontSize:12,color:MUTED}}>No meals returned.</div> : (activePlan.meals || []).map((m,i)=>(
+              <div key={i} style={{display:"grid",gridTemplateColumns:wide?"90px 1fr 1fr 1fr":"1fr",gap:8,padding:"8px 2px",borderBottom:`1px solid ${i===activePlan.meals.length-1?"transparent":BORDER}`}}>
+                <div style={{fontSize:12,fontWeight:700,color:ACCENT}}>{m.day || `Day ${i+1}`}</div>
+                <div style={{fontSize:12,color:TEXT}}><strong style={{color:MUTED}}>Breakfast:</strong> {m.breakfast || "-"}</div>
+                <div style={{fontSize:12,color:TEXT}}><strong style={{color:MUTED}}>Lunch:</strong> {m.lunch || "-"}</div>
+                <div style={{fontSize:12,color:TEXT}}><strong style={{color:MUTED}}>Dinner:</strong> {m.dinner || "-"}</div>
+              </div>
+            ))}
+          </Card>
+
+          <Card>
+            <Label>Grocery List + Store Cost Estimates</Label>
+            {(activePlan.grocery_items || []).length===0 ? <div style={{fontSize:12,color:MUTED}}>No grocery list returned.</div> : (activePlan.grocery_items || []).map((it,i)=>(
+              <div key={i} style={{padding:"9px 2px",borderBottom:`1px solid ${i===activePlan.grocery_items.length-1?"transparent":BORDER}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:TEXT}}>{it.item} <span style={{fontSize:11,color:MUTED,fontWeight:400}}>({it.quantity || "qty n/a"})</span></div>
+                    <div style={{fontSize:11,color:MUTED}}>{it.category || "General"} · {it.meal_usage || ""}</div>
+                  </div>
+                  <div style={{fontSize:12,color:"#22c55e",fontWeight:800}}>Best: {it.best_store || "n/a"} {it.best_cost!=null ? fmt(it.best_cost) : ""}</div>
+                </div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
+                  {Object.entries(it.store_costs || {}).map(([sn,sv])=>(
+                    <span key={sn} style={{fontSize:11,color:MUTED,background:BG,border:`1px solid ${BORDER}`,borderRadius:999,padding:"2px 8px"}}>{sn}: {typeof sv === "number" ? fmt(sv) : sv}</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </Card>
+        </>
+      )}
+
+      <Card>
+        <Label>Monthly Meal / Grocery Notes</Label>
+        <div style={{fontSize:12,color:MUTED,marginBottom:8}}>
+          Notes are auto-saved by month and included in the AI meal-plan prompt.
+        </div>
+        <textarea
+          value={listByMonth[selectedMonth] || ""}
+          onChange={e=>setListByMonth(prev => ({ ...prev, [selectedMonth]: e.target.value }))}
+          placeholder="Meal prep ideas, pantry list, low-cost recipes, stores to visit..."
+          style={{width:"100%",minHeight:140,resize:"vertical",background:BG,border:`1px solid ${BORDER}`,borderRadius:10,padding:"10px 12px",color:TEXT,fontSize:13,outline:"none"}}
+        />
+      </Card>
+      <Card>
+        <Label>Saved AI Responses � {selectedMonth}</Label>
+        {activeResponses.length === 0 ? (
+          <div style={{fontSize:12,color:MUTED}}>No saved meal-plan responses for this month yet.</div>
+        ) : (
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {activeResponses.map((r, idx) => (
+              <div key={idx} style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:10,padding:"10px 12px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:5,flexWrap:"wrap"}}>
+                  <div style={{fontSize:12,fontWeight:700,color:TEXT}}>{r.summary || "AI response"}</div>
+                  <div style={{fontSize:11,color:MUTED}}>{new Date(r.at).toLocaleString()}</div>
+                </div>
+                <details>
+                  <summary style={{fontSize:12,color:ACCENT,cursor:"pointer"}}>Show prompt and response</summary>
+                  <div style={{marginTop:8,fontSize:11,color:MUTED,whiteSpace:"pre-wrap"}}>{r.prompt || "No prompt saved."}</div>
+                  <div style={{marginTop:8,fontSize:11,color:TEXT,whiteSpace:"pre-wrap"}}>{r.response || "No response text saved."}</div>
+                </details>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 const RECS = [
   {
     id: "groceries",
@@ -2454,7 +3023,7 @@ const RECS = [
 ];
 
 function Recommendations({ wide, isMobile }) {
-  const { checkTxns, ccTxns, selectedMonth, normSurplus, payoffs, takeHome, groceryGoal, dashName } = useBudget();
+  const { checkTxns, ccTxns, selectedMonth, availableMonths, normSurplus, payoffs, takeHome, groceryGoal, familySize, dashName } = useBudget();
   const [expanded, setExpanded] = useState(null);
   const [tipsByMonth, setTipsByMonth] = useState(() => ls.getJSON("budget_ai_tips_by_month", {}));
   const [promptByMonth, setPromptByMonth] = useState(() => ls.getJSON("budget_ai_prompts_by_month", {}));
@@ -2463,13 +3032,14 @@ function Recommendations({ wide, isMobile }) {
     return Array.isArray(saved?.[selectedMonth]) && saved[selectedMonth].length ? saved[selectedMonth] : RECS;
   });
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState(0);
   const [refreshErr, setRefreshErr] = useState(null);
   const [showPrompt, setShowPrompt] = useState(false);
 
   const totalImpact = payoffs.reduce((s, p) => s + p.payment, 0);
 
   // Actual gap = actual income minus actual spending (not normalized)
-  const actualIncome = checkTxns.filter(t => t.month === selectedMonth && t.cat === "Income").reduce((s,t)=>s+t.amount,0) || takeHome;
+  const actualIncome = [...checkTxns, ...ccTxns].filter(t => t.month === selectedMonth && t.cat === "Income").reduce((s,t)=>s+t.amount,0) || takeHome;
   const actualSpend  = [...checkTxns,...ccTxns].filter(t => t.month === selectedMonth && t.cat !== "Income" && t.cat !== "Transfer").reduce((s,t)=>s+t.amount,0);
   const actualGap    = actualIncome - actualSpend;
 
@@ -2485,7 +3055,11 @@ function Recommendations({ wide, isMobile }) {
       return;
     }
     setRefreshing(true);
+    setRefreshProgress(8);
     setRefreshErr(null);
+    const progressTimer = setInterval(() => {
+      setRefreshProgress(p => Math.min(92, p + (p < 40 ? 10 : p < 70 ? 6 : 3)));
+    }, 300);
     try {
       // Build a spending summary from actual transactions
       const allTxns = [...checkTxns, ...ccTxns].filter(t => t.month === selectedMonth && t.cat !== "Income" && t.cat !== "Transfer");
@@ -2494,16 +3068,29 @@ function Recommendations({ wide, isMobile }) {
       const spendSummary = Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>`${cat}: $${amt.toFixed(2)}`).join(", ");
       const gapStr = normSurplus < 0 ? `monthly gap of $${Math.abs(normSurplus).toFixed(0)}` : `monthly surplus of $${normSurplus.toFixed(0)}`;
       const debtStr = payoffs.map(p=>`${p.name} ($${p.payment}/mo, payoff ${p.date})`).join("; ");
+      const selectedIdx = APP_MONTHS.indexOf(selectedMonth);
+      const previousMonths = availableMonths
+        .filter(m => APP_MONTHS.indexOf(m) >= 0 && APP_MONTHS.indexOf(m) < selectedIdx)
+        .slice(-3);
+      const prevComparison = previousMonths.length
+        ? previousMonths.map(m => {
+            const inc = [...checkTxns, ...ccTxns].filter(t => t.month === m && t.cat === "Income").reduce((s,t)=>s+t.amount,0) || takeHome;
+            const spd = [...checkTxns, ...ccTxns].filter(t => t.month === m && t.cat !== "Income" && t.cat !== "Transfer").reduce((s,t)=>s+t.amount,0);
+            return `${m}: income $${inc.toFixed(2)}, spend $${spd.toFixed(2)}, gap $${(inc - spd).toFixed(2)}`;
+          }).join(" | ")
+        : "No prior months available yet.";
 
       const actualGroceries = byCat["Groceries"] || 0;
       const grocerySavings = Math.max(0, actualGroceries - groceryGoal).toFixed(0);
       const prompt = `You are a personal finance advisor for ${dashName}.
 
 CURRENT SITUATION (${selectedMonth}):
+- Family size: ${familySize}
 - Take-home pay: $${takeHome.toFixed(2)}/mo
 - Total spending: $${allTxns.reduce((s,t)=>s+t.amount,0).toFixed(2)}/mo
 - Monthly gap (overspending): $${Math.abs(normSurplus).toFixed(0)}/mo (they are NEGATIVE — do NOT suggest savings/investing/emergency funds until this gap is eliminated)
 - Spending by category: ${spendSummary}
+- Previous month comparison (income/spend/gap): ${prevComparison}
 
 STATED GOALS:
 - Grocery target: $${groceryGoal}/mo (currently spending $${actualGroceries.toFixed(0)}/mo — $${grocerySavings} over goal)
@@ -2559,6 +3146,7 @@ Return ONLY a valid JSON array, no markdown, no explanation.`;
           ls.setJSON("budget_ai_prompts_by_month", next);
           return next;
         });
+        setRefreshProgress(100);
       } else {
         throw new Error("Invalid response format");
       }
@@ -2566,7 +3154,10 @@ Return ONLY a valid JSON array, no markdown, no explanation.`;
       console.error(e);
       setRefreshErr("Couldn't refresh tips — make sure an API key is available. Showing original tips.");
       setRecs(RECS);
+      setRefreshProgress(100);
     }
+    clearInterval(progressTimer);
+    setTimeout(() => setRefreshProgress(0), 600);
     setRefreshing(false);
   };
 
@@ -2594,6 +3185,17 @@ Return ONLY a valid JSON array, no markdown, no explanation.`;
           </div>
         </div>
         {refreshErr && <div style={{fontSize:12,color:"#f59e0b",marginBottom:10,padding:"8px 12px",background:"#f59e0b11",borderRadius:8,border:"1px solid #f59e0b33"}}>{refreshErr}</div>}
+        {(refreshing || refreshProgress > 0) && (
+          <div style={{marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:MUTED,marginBottom:6}}>
+              <span>AI tip refresh progress</span>
+              <span>{Math.round(refreshProgress)}%</span>
+            </div>
+            <div style={{height:8,borderRadius:99,background:"#1f2937",overflow:"hidden"}}>
+              <div style={{height:"100%",width:`${refreshProgress}%`,background:"linear-gradient(90deg,#818cf8,#22d3ee)",transition:"width .25s ease"}}/>
+            </div>
+          </div>
+        )}
         {showPrompt && (
           <div style={{marginBottom:10,padding:"10px 12px",background:BG,border:`1px solid ${BORDER}`,borderRadius:10}}>
             <div style={{fontSize:11,color:MUTED,marginBottom:6}}>Last AI prompt for {selectedMonth}</div>
@@ -2675,7 +3277,7 @@ const TITHE_RATE   = 0.10;
 const ALL_MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 function TitheTracker({ wide, isMobile }) {
-  const { takeHome, t2CarryIn, setT2CarryIn, checkTxns, ccTxns, availableMonths, titheSettings } = useBudget();
+  const { takeHome, t2CarryIn, setT2CarryIn, checkTxns, ccTxns, availableMonths, selectedMonth, titheSettings } = useBudget();
   const MONTHLY_TH = takeHome * TITHE_RATE;
   const carry = t2CarryIn;
   const setCarry = setT2CarryIn;
@@ -2691,7 +3293,7 @@ function TitheTracker({ wide, isMobile }) {
     return availableMonths.map(month => {
       const paid = [...checkTxns, ...ccTxns]
         .filter(t => {
-          if (t.month !== month || t.cat !== "Giving & Tithe") return false;
+          if (t.excludeFromTags || t.month !== month || t.cat !== "Giving & Tithe") return false;
           if (t1Keys.length === 0) return true;
           const desc = t.desc.toLowerCase();
           return t1Keys.some(k => desc.includes(k));
@@ -2705,7 +3307,7 @@ function TitheTracker({ wide, isMobile }) {
   const T2_ACTUAL = useMemo(() => {
     return availableMonths.map(month => {
       const saved = [...checkTxns, ...ccTxns]
-        .filter(t => t.month === month && t.cat === "Giving & Tithe" && t2Keys.length > 0 &&
+        .filter(t => !t.excludeFromTags && t.month === month && t.cat === "Giving & Tithe" && t2Keys.length > 0 &&
           t2Keys.some(k => t.desc.toLowerCase().includes(k)))
         .reduce((s, t) => s + t.amount, 0);
       return { month: SHORT[ORDER.indexOf(month)], saved, notes: "" };
@@ -2771,8 +3373,9 @@ function TitheTracker({ wide, isMobile }) {
       <Card glow="#7c6af7">
         <Label>Tithe Tracker · 2026</Label>
         <div style={{fontSize:13, color:MUTED, lineHeight:1.7, marginBottom:12}}>
-          1st Tithe = 10% to church monthly · 2nd Tithe = 10% saved for the {["January","February","March","April","May","June","July","August","September","October","November","December"][titheSettings.feastMonth]} feast, then spent and restarted.
-          Take-home is {fmt(takeHome)}/mo so each tithe is <strong style={{color:ACCENT}}>{fmt(MONTHLY_TH)}/mo</strong>.
+          <div><strong style={{color:TEXT}}>1st Tithe target:</strong> 10% of monthly take-home = <strong style={{color:ACCENT}}>{fmt(MONTHLY_TH)}/mo</strong>.</div>
+          <div><strong style={{color:TEXT}}>2nd Tithe:</strong> 10% saved monthly for the {["January","February","March","April","May","June","July","August","September","October","November","December"][titheSettings.feastMonth]} feast, then reset.</div>
+          <div>Current take-home assumption: {fmt(takeHome)}/mo.</div>
         </div>
         <div style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
           <span style={{fontSize:13, color:MUTED}}>2nd Tithe account balance (carry-in from 2025):</span>
@@ -2815,9 +3418,9 @@ function TitheTracker({ wide, isMobile }) {
 
                 {/* Breakdown — derived from imported transactions */}
         {T1_ACTUAL.some(m => m.paid > 0) && (() => {
-          const currentMonthName = availableMonths[availableMonths.length - 1] || "January";
+          const currentMonthName = selectedMonth;
           const t1Txns = [...checkTxns, ...ccTxns].filter(t =>
-            t.month === currentMonthName && t.cat === "Giving & Tithe" &&
+            !t.excludeFromTags && t.month === currentMonthName && t.cat === "Giving & Tithe" &&
             (t1Keys.length === 0 || t1Keys.some(k => t.desc.toLowerCase().includes(k)))
           );
           if (t1Txns.length === 0) return null;
@@ -2896,9 +3499,9 @@ function TitheTracker({ wide, isMobile }) {
 
         {/* 2nd Tithe breakdown — derived from imported transactions */}
         {(() => {
-          const currentMonthName = availableMonths[availableMonths.length - 1] || "January";
+          const currentMonthName = selectedMonth;
           const t2Txns = [...checkTxns, ...ccTxns].filter(t =>
-            t.month === currentMonthName && t.cat === "Giving & Tithe" &&
+            !t.excludeFromTags && t.month === currentMonthName && t.cat === "Giving & Tithe" &&
             t2Keys.length > 0 &&
             t2Keys.some(k => t.desc.toLowerCase().includes(k))
           );
@@ -3382,6 +3985,7 @@ function Settings({ isMobile }) {
     budgetKc, setBudgetKc,
     t2CarryIn, setT2CarryIn,
     groceryGoal, setGroceryGoal,
+    familySize, setFamilySize,
     clearTxns, addTxns, checkTxns, ccTxns,
     payoffs, setPayoffs,
     summaryRows,
@@ -3390,6 +3994,7 @@ function Settings({ isMobile }) {
     showTithe, setShowTithe,
     showABA,   setShowABA,
     hideZeroSummaryCats, setHideZeroSummaryCats,
+    mobileTxnActionMenu, setMobileTxnActionMenu,
     customCats, setCustomCats, allCats,
     abaSettings, setAbaSettings,
     titheSettings, setTitheSettings,
@@ -3402,7 +4007,7 @@ function Settings({ isMobile }) {
   const handleDeleteClick = (catName) => {
     const txnCount = [...checkTxns, ...ccTxns].filter(t => t.cat === catName).length;
     if (txnCount === 0) {
-      // No transactions — delete immediately
+      if (!confirmDeleteAction(`Delete category \"${catName}\"?`)) return;
       setCustomCats(prev => prev.filter(c => c.name !== catName));
     } else {
       // Has transactions — require move-to selection
@@ -3414,6 +4019,7 @@ function Settings({ isMobile }) {
 
   const confirmDelete = () => {
     if (!deletingCat || !moveTo) return;
+    if (!confirmDeleteAction(`Move transactions to "${moveTo}" and delete "${deletingCat}"?`)) return;
     retargetCat(deletingCat, moveTo);
     setCustomCats(prev => prev.filter(c => c.name !== deletingCat));
     setDeletingCat(null);
@@ -3421,6 +4027,7 @@ function Settings({ isMobile }) {
   };
 
   const [thInput, setThInput]     = useState(takeHome || "");
+  const [familyInput, setFamilyInput] = useState(familySize || 4);
   const [t2Input, setT2Input]     = useState(t2CarryIn || "");
   const [otDesc, setOtDesc]       = useState("");
   const [otAmt, setOtAmt]         = useState("");
@@ -3430,6 +4037,7 @@ function Settings({ isMobile }) {
   const [apiKeyInput, setApiKeyInput] = useState(() => { try { return localStorage.getItem("budget_apikey") || ""; } catch { return ""; } });
   const [apiKeySaved, setApiKeySaved] = useState(false);
   const saveApiKey = () => { try { localStorage.setItem("budget_apikey", apiKeyInput); setApiKeySaved(true); setTimeout(() => setApiKeySaved(false), 2000); } catch {} };
+  useEffect(() => { setFamilyInput(familySize || 4); }, [familySize]);
 
   const accentSet = "#a78bfa";
 
@@ -3439,6 +4047,7 @@ function Settings({ isMobile }) {
       exportedAt: new Date().toISOString(),
       checkTxns, ccTxns,
       takeHome, t2CarryIn, groceryGoal,
+      familySize,
       oneTimes, budgetKc, payoffs,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -3460,6 +4069,7 @@ function Settings({ isMobile }) {
         if (d.takeHome)   setTakeHome(d.takeHome);
         if (d.t2CarryIn !== undefined) setT2CarryIn(d.t2CarryIn);
         if (d.groceryGoal) setGroceryGoal(d.groceryGoal);
+        if (d.familySize) setFamilySize(Math.max(1, parseInt(d.familySize, 10) || 1));
         if (d.oneTimes)   setOneTimes(d.oneTimes);
         if (d.budgetKc)   setBudgetKc(d.budgetKc);
         if (d.payoffs)    setPayoffs(d.payoffs);
@@ -3501,6 +4111,7 @@ function Settings({ isMobile }) {
           { key:"tithe", label:"Tithe Tracker", emoji:"🙏", desc:"Giving & Tithe category + Tithe tab", val:showTithe, set:setShowTithe },
           { key:"aba",   label:"ABA Planner",   emoji:"🧩", desc:"ABA Therapy category + ABA tab",   val:showABA,   set:setShowABA   },
           { key:"hideZeroSummary", label:"Hide $0 Summary Rows", emoji:"📉", desc:"Hide zero-amount categories in Summary breakdown", val:hideZeroSummaryCats, set:setHideZeroSummaryCats },
+          { key:"mobileTxnActionMenu", label:"Compact Mobile Txn Actions", emoji:"📱", desc:"Show one Options button on mobile transaction rows", val:mobileTxnActionMenu, set:setMobileTxnActionMenu },
         ].map(f => (
           <div key={f.key} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderRadius:10,background:BG,border:`1px solid ${f.val?"#7c6af744":BORDER}`,marginBottom:8,opacity:f.val?1:0.6,transition:"all .15s"}}>
             <span style={{fontSize:20}}>{f.emoji}</span>
@@ -3645,12 +4256,11 @@ function Settings({ isMobile }) {
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{fontSize:13,color:TEXT,flex:1}}>Feast month</span>
-            <input type="number" min={1} max={12} value={titheSettings.feastMonth + 1}
-              onChange={e => setTitheSettings(prev => ({ ...prev, feastMonth: Math.max(0, Math.min(11, parseInt(e.target.value,10) - 1)) || 0 }))}
-              style={{width:60,background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"5px 8px",color:TEXT,fontSize:13,outline:"none"}}/>
-            <span style={{fontSize:12,color:MUTED}}>
-              {["January","February","March","April","May","June","July","August","September","October","November","December"][titheSettings.feastMonth]}
-            </span>
+            <select value={titheSettings.feastMonth}
+              onChange={e => setTitheSettings(prev => ({ ...prev, feastMonth: parseInt(e.target.value, 10) || 0 }))}
+              style={{minWidth:140,background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"6px 10px",color:TEXT,fontSize:13,outline:"none"}}>
+              {MONTHS.map((m, idx) => <option key={m} value={idx}>{m}</option>)}
+            </select>
           </div>
         </div>
       </Card>
@@ -3742,6 +4352,24 @@ function Settings({ isMobile }) {
         <div style={{marginTop:8,fontSize:12,color:accentSet}}>Current: {takeHome > 0 ? `$${takeHome.toLocaleString()}` : "Not set"}</div>
       </Card>
 
+      <Card glow="#22c55e" style={{marginTop:16}}>
+        <Label>Family Size</Label>
+        <div style={{fontSize:12,color:MUTED,marginBottom:10}}>Used in AI tips context and meal-planning recommendations.</div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <input
+            type="number" min={1} value={familyInput}
+            onChange={e => setFamilyInput(Math.max(1, parseInt(e.target.value, 10) || 1))}
+            onBlur={() => setFamilySize(Math.max(1, parseInt(familyInput, 10) || 1))}
+            style={{width:120,background:BG,border:`1px solid #22c55e`,borderRadius:8,padding:"8px 10px",color:TEXT,fontSize:15,outline:"none"}}
+          />
+          <button onClick={() => setFamilySize(Math.max(1, parseInt(familyInput, 10) || 1))}
+            style={{padding:"8px 16px",borderRadius:8,background:"#22c55e",color:"#0d1117",fontWeight:800,fontSize:13,border:"none",cursor:"pointer"}}>
+            Save
+          </button>
+        </div>
+        <div style={{marginTop:8,fontSize:12,color:"#22c55e"}}>Current: {familySize} {familySize===1 ? "person" : "people"}</div>
+      </Card>
+
       {/* 2nd Tithe Carry-In — only visible when Tithe feature is on */}
       {showTithe && (
       <Card glow="#22c55e" style={{marginTop:16}}>
@@ -3801,7 +4429,10 @@ function Settings({ isMobile }) {
                 <span style={{flex:1,fontSize:13,color:TEXT}}>{o.name}</span>
                 <span style={{fontSize:12,color:"#ec4899",fontWeight:700}}>${o.amount.toLocaleString()}</span>
                 <span style={{fontSize:11,color:MUTED}}>{o.cat}</span>
-                <button onClick={() => setOneTimes(prev => prev.filter((_,j) => j !== i))}
+                <button onClick={() => {
+                  if (!confirmDeleteAction("Delete this one-time expense?")) return;
+                  setOneTimes(prev => prev.filter((_,j) => j !== i));
+                }}
                   style={{background:"#ef444422",color:"#ef4444",border:"none",borderRadius:6,padding:"2px 8px",fontSize:11,cursor:"pointer",fontWeight:700}}>✕</button>
               </div>
             ))}
@@ -4568,7 +5199,7 @@ Do NOT include a "cat" field.`;
             <div style={{fontSize:56,marginBottom:16}}>🎉</div>
             <div style={{fontSize:20,fontWeight:800,color:TEXT,marginBottom:8}}>{month} imported!</div>
             <div style={{fontSize:13,color:MUTED,marginBottom:28}}>
-              {includedCount} transactions added to Checking and Credit Card tabs.<br/>
+              {includedCount} transactions added to Transactions (Checking/Credit Card).<br/>
               The Summary, Sankey, and Category Breakdown have all updated.
             </div>
             <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
@@ -4591,21 +5222,22 @@ Do NOT include a "cat" field.`;
 
 
 const NAV = [
-  { id:"summary",   label:"Summary",    emoji:"📋" },
-  { id:"recs",      label:"Tips",       emoji:"💡" },
-  { id:"tithe",     label:"Tithe",      emoji:"🙏" },
-  { id:"payoffs",   label:"Payoffs",    emoji:"💳" },
-  { id:"scenarios", label:"Scenarios",  emoji:"📈" },
-  { id:"aba",       label:"ABA",        emoji:"🧩" },
-  { id:"categories", label:"Categories", emoji:"📂" },
-  { id:"trends",    label:"Trends",     emoji:"📊" },
-  { id:"import",    label:"Import",     emoji:"📥" },
-  { id:"checking",  label:"Checking",   emoji:"🏦" },
-  { id:"cc",        label:"Credit Card",emoji:"💰" },
-  { id:"settings",  label:"Settings",   emoji:"⚙️" },
+  { id:"summary",      label:"Summary",      emoji:"\u{1F4CB}" },
+  { id:"recs",         label:"Tips",         emoji:"\u{1F4A1}" },
+  { id:"tithe",        label:"Tithe",        emoji:"\u{1F64F}" },
+  { id:"payoffs",      label:"Payoffs",      emoji:"\u{1F4B3}" },
+  { id:"scenarios",    label:"Scenarios",    emoji:"\u{1F4C8}" },
+  { id:"aba",          label:"ABA",          emoji:"\u{1F9E9}" },
+  { id:"categories",   label:"Categories",   emoji:"\u{1F4C2}" },
+  { id:"trends",       label:"Trends",       emoji:"\u{1F4CA}" },
+  { id:"income",       label:"Income",       emoji:"\u{1F4B5}" },
+  { id:"meals",        label:"Meals",        emoji:"\u{1F37D}\u{FE0F}" },
+  { id:"import",       label:"Import",       emoji:"\u{1F4E5}" },
+  { id:"transactions", label:"Transactions", emoji:"\u{1F9FE}" },
+  { id:"settings",     label:"Settings",     emoji:"\u{2699}\u{FE0F}" },
 ];
-const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.1";
+const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
+const APP_VERSION = "0.1.2";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
@@ -4642,10 +5274,10 @@ export default function BudgetDashboardClean() {
 
   // ── Live transaction state — persisted to localStorage ────────────────────
   const [checkTxns, setCheckTxns] = useState(() => {
-    return ls.getJSON("budget_checkTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t) }));
+    return ls.getJSON("budget_checkTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), excludeFromTags: !!t.excludeFromTags }));
   });
   const [ccTxns, setCCTxns] = useState(() => {
-    return ls.getJSON("budget_ccTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t) }));
+    return ls.getJSON("budget_ccTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), excludeFromTags: !!t.excludeFromTags }));
   });
 
   const [selectedMonth, setSelectedMonth] = useState("January");
@@ -4667,6 +5299,9 @@ export default function BudgetDashboardClean() {
   const [groceryGoal, setGroceryGoal] = useState(() => {
     const s = ls.get("budget_groceryGoal"); return s ? parseFloat(s) : 1200;
   });
+  const [familySize, setFamilySize] = useState(() => {
+    const s = ls.get("budget_familySize"); return s ? Math.max(1, parseInt(s, 10) || 1) : 4;
+  });
 
   // Persist all state to localStorage
   useEffect(() => { ls.setJSON("budget_checkTxns", checkTxns); }, [checkTxns]);
@@ -4676,6 +5311,7 @@ export default function BudgetDashboardClean() {
   useEffect(() => { ls.setJSON("budget_kc", budgetKc); }, [budgetKc]);
   useEffect(() => { ls.set("budget_t2carry", String(t2CarryIn)); }, [t2CarryIn]);
   useEffect(() => { ls.set("budget_groceryGoal", String(groceryGoal)); }, [groceryGoal]);
+  useEffect(() => { ls.set("budget_familySize", String(familySize)); }, [familySize]);
 
   // All months that have transaction data
   const availableMonths = useMemo(() => {
@@ -4699,6 +5335,7 @@ export default function BudgetDashboardClean() {
   const [showTithe, setShowTithe] = useState(() => ls.get("budget_showTithe") !== "0");
   const [showABA, setShowABA]   = useState(() => ls.get("budget_showABA")   !== "0");
   const [hideZeroSummaryCats, setHideZeroSummaryCats] = useState(() => ls.get("budget_hideZeroSummaryCats") === "1");
+  const [mobileTxnActionMenu, setMobileTxnActionMenu] = useState(() => ls.get("budget_mobileTxnActionMenu") !== "0");
   const [customCats, setCustomCats] = useState(() => {
     const raw = ls.getJSON("budget_customCats", []);
     return raw.map(c => typeof c === "string" ? { name: c, icon: "📁", color: "#94a3b8" } : c);
@@ -4720,6 +5357,7 @@ export default function BudgetDashboardClean() {
   useEffect(() => { ls.set("budget_showTithe", showTithe ? "1" : "0"); }, [showTithe]);
   useEffect(() => { ls.set("budget_showABA",   showABA   ? "1" : "0"); }, [showABA]);
   useEffect(() => { ls.set("budget_hideZeroSummaryCats", hideZeroSummaryCats ? "1" : "0"); }, [hideZeroSummaryCats]);
+  useEffect(() => { ls.set("budget_mobileTxnActionMenu", mobileTxnActionMenu ? "1" : "0"); }, [mobileTxnActionMenu]);
 
   // Redirect away from tabs that have been toggled off
   useEffect(() => {
@@ -4745,12 +5383,20 @@ export default function BudgetDashboardClean() {
     else                    setCCTxns(prev => prev.map(t => t.id === id ? { ...t, ...cleanPatch, month: deriveTxnMonth({ ...t, ...cleanPatch }) } : t));
   }, []);
 
-  const deleteTxn = useCallback((src, id) => {
+  const deleteTxn = useCallback((src, id, opts = {}) => {
+    if (!opts.force && !confirmDeleteAction("Delete this transaction?")) return;
     if (src === "checking") setCheckTxns(prev => prev.filter(t => t.id !== id));
     else                    setCCTxns(prev => prev.filter(t => t.id !== id));
   }, []);
 
+  const toggleTxnTagging = useCallback((src, id) => {
+    if (src === "checking") setCheckTxns(prev => prev.map(t => t.id === id ? { ...t, excludeFromTags: !t.excludeFromTags } : t));
+    else                    setCCTxns(prev => prev.map(t => t.id === id ? { ...t, excludeFromTags: !t.excludeFromTags } : t));
+  }, []);
+
   const clearTxns = useCallback((src) => {
+    const label = src === "all" ? "all transactions" : (src === "checking" ? "all checking transactions" : "all credit card transactions");
+    if (!confirmDeleteAction(`Delete ${label}? This cannot be undone.`)) return;
     if (src === "all")      { setCheckTxns([]); setCCTxns([]); }
     else if (src === "checking") setCheckTxns([]);
     else                    setCCTxns([]);
@@ -4787,12 +5433,12 @@ export default function BudgetDashboardClean() {
     if (src === "checking") {
       setCheckTxns(prev => {
         const nextIdx = prev.length;
-        return [...prev, ...newTxns.map((t, i) => ({ ...t, month: deriveTxnMonth(t), id: `c${nextIdx + i}` }))];
+        return [...prev, ...newTxns.map((t, i) => ({ ...t, month: deriveTxnMonth(t), excludeFromTags: !!t.excludeFromTags, id: `c${nextIdx + i}` }))];
       });
     } else {
       setCCTxns(prev => {
         const nextIdx = prev.length;
-        return [...prev, ...newTxns.map((t, i) => ({ ...t, month: deriveTxnMonth(t), id: `cc${nextIdx + i}` }))];
+        return [...prev, ...newTxns.map((t, i) => ({ ...t, month: deriveTxnMonth(t), excludeFromTags: !!t.excludeFromTags, id: `cc${nextIdx + i}` }))];
       });
     }
   }, []);
@@ -4841,7 +5487,7 @@ export default function BudgetDashboardClean() {
 
   const budget = {
     summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus,
-    updateTxnCat, updateTxn, deleteTxn, clearTxns, addTxns, replaceTxn,
+    updateTxnCat, updateTxn, deleteTxn, toggleTxnTagging, clearTxns, addTxns, replaceTxn,
     selectedMonth, setSelectedMonth, availableMonths,
     payoffs, setPayoffs,
     waterfallDisabled, setWaterfallDisabled,
@@ -4850,10 +5496,12 @@ export default function BudgetDashboardClean() {
     budgetKc, setBudgetKc,
     t2CarryIn, setT2CarryIn,
     groceryGoal, setGroceryGoal,
+    familySize, setFamilySize,
     dashName, setDashName,
     showTithe, setShowTithe,
     showABA,   setShowABA,
     hideZeroSummaryCats, setHideZeroSummaryCats,
+    mobileTxnActionMenu, setMobileTxnActionMenu,
     customCats, setCustomCats, allCats, catColorsAll,
     abaSettings, setAbaSettings,
     titheSettings, setTitheSettings,
@@ -4869,9 +5517,10 @@ export default function BudgetDashboardClean() {
     payoffs:   <Payoffs        {...props}/>,
     categories: <Categories    {...props}/>,
     trends:    <Trends          {...props}/>,
+    income:    <IncomePage      {...props}/>,
+    meals:     <MealPlanningPage {...props}/>,
     import:    <StatementImporter {...props}/>,
-    checking:  <TxnTable src="checking" isMobile={isMobile}/>,
-    cc:        <TxnTable src="cc"       isMobile={isMobile}/>,
+    transactions:  <TransactionsPage isMobile={isMobile}/>,
     settings:  <Settings isMobile={isMobile}/>,
   };
 
@@ -4880,7 +5529,7 @@ export default function BudgetDashboardClean() {
     if (n.id === "aba"   && !showABA)   return false;
     return true;
   });
-  const auditStart    = visibleNav.findIndex(n => n.id === "checking");
+  const auditStart    = visibleNav.findIndex(n => n.id === "transactions");
   const dashboardNav  = visibleNav.slice(0, auditStart);
   const auditNav      = visibleNav.slice(auditStart);
   const mobileRow1Len = Math.ceil(visibleNav.length / 2);
@@ -4941,9 +5590,9 @@ export default function BudgetDashboardClean() {
           <div style={{padding:"16px 14px 120px",flex:1}}>
             {pages[page]}
             <div style={{marginTop:18,textAlign:"center"}}>
-              <a href={REPO_URL} target="_blank" rel="noreferrer" style={{fontSize:11,color:DIM,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
+              <a href={PAGES_URL} target="_blank" rel="noreferrer" style={{fontSize:11,color:DIM,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
                 <span aria-hidden="true">🐙</span>
-                <span>Source code on GitHub</span>
+                <span>Open on GitHub Pages</span>
               </a>
             </div>
           </div>
@@ -4987,7 +5636,7 @@ export default function BudgetDashboardClean() {
                 ))}
               </div>
             </div>
-            <nav style={{flex:1,padding:"12px 0"}}>
+            <nav style={{padding:"12px 0"}}>
               <div style={{padding:"16px 20px 6px",fontSize:10,fontWeight:700,color:DIM,textTransform:"uppercase",letterSpacing:".6px"}}>Dashboard</div>
               {dashboardNav.map(n=>{const a=page===n.id;return(
                 <button key={n.id} onClick={()=>setPage(n.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"10px 20px",background:a?ACCENT+"12":"transparent",borderLeft:`3px solid ${a?ACCENT:"transparent"}`,color:a?ACCENT:MUTED,fontSize:14,fontWeight:a?700:400,transition:"all .15s",textAlign:"left"}}>
@@ -5010,9 +5659,9 @@ export default function BudgetDashboardClean() {
                 </div>
               ))}
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${BORDER}`}}>
-                <a href={REPO_URL} target="_blank" rel="noreferrer" style={{fontSize:11,color:DIM,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
+                <a href={PAGES_URL} target="_blank" rel="noreferrer" style={{fontSize:11,color:DIM,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
                   <span aria-hidden="true">🐙</span>
-                  <span>Source code on GitHub</span>
+                  <span>Open on GitHub Pages</span>
                 </a>
                 <div style={{fontSize:10,color:DIM,marginTop:6}}>v{APP_VERSION}</div>
               </div>
@@ -5034,6 +5683,8 @@ export default function BudgetDashboardClean() {
     </BudgetCtx.Provider>
   );
 }
+
+
 
 
 
