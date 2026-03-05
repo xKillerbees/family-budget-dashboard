@@ -3303,6 +3303,7 @@ function TitheTracker({ wide, isMobile }) {
   const SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const t1Keys = useMemo(() => (titheSettings.t1Keywords || "").split(",").map(k => k.trim().toLowerCase()).filter(Boolean), [titheSettings.t1Keywords]);
   const t2Keys = useMemo(() => (titheSettings.t2Keywords || "").split(",").map(k => k.trim().toLowerCase()).filter(Boolean), [titheSettings.t2Keywords]);
+  const titheText = useCallback((t) => `${t?.desc || ""} ${t?.note || ""}`.toLowerCase(), []);
 
   // 1st Tithe: Giving & Tithe category spending per month (church transfers + Hillcrest etc)
   const T1_ACTUAL = useMemo(() => {
@@ -3311,24 +3312,24 @@ function TitheTracker({ wide, isMobile }) {
         .filter(t => {
           if (t.excludeFromTags || t.month !== month || t.cat !== "Giving & Tithe") return false;
           if (t1Keys.length === 0) return true;
-          const desc = t.desc.toLowerCase();
-          return t1Keys.some(k => desc.includes(k));
+          const hay = titheText(t);
+          return t1Keys.some(k => hay.includes(k));
         })
         .reduce((s, t) => s + t.amount, 0);
       return { month: SHORT[ORDER.indexOf(month)], paid, notes: "" };
     });
-  }, [checkTxns, ccTxns, availableMonths, t1Keys]);
+  }, [checkTxns, ccTxns, availableMonths, t1Keys, titheText]);
 
   // 2nd Tithe: transfers to savings — matched by configurable keywords in desc
   const T2_ACTUAL = useMemo(() => {
     return availableMonths.map(month => {
       const saved = [...checkTxns, ...ccTxns]
         .filter(t => !t.excludeFromTags && t.month === month && t.cat === "Giving & Tithe" && t2Keys.length > 0 &&
-          t2Keys.some(k => t.desc.toLowerCase().includes(k)))
+          t2Keys.some(k => titheText(t).includes(k)))
         .reduce((s, t) => s + t.amount, 0);
       return { month: SHORT[ORDER.indexOf(month)], saved, notes: "" };
     });
-  }, [checkTxns, ccTxns, availableMonths, t2Keys]);
+  }, [checkTxns, ccTxns, availableMonths, t2Keys, titheText]);
 
   const currentMonth = availableMonths.length;
 
@@ -3437,7 +3438,7 @@ function TitheTracker({ wide, isMobile }) {
           const currentMonthName = selectedMonth;
           const t1Txns = [...checkTxns, ...ccTxns].filter(t =>
             !t.excludeFromTags && t.month === currentMonthName && t.cat === "Giving & Tithe" &&
-            (t1Keys.length === 0 || t1Keys.some(k => t.desc.toLowerCase().includes(k)))
+            (t1Keys.length === 0 || t1Keys.some(k => titheText(t).includes(k)))
           );
           if (t1Txns.length === 0) return null;
           return (
@@ -3519,7 +3520,7 @@ function TitheTracker({ wide, isMobile }) {
           const t2Txns = [...checkTxns, ...ccTxns].filter(t =>
             !t.excludeFromTags && t.month === currentMonthName && t.cat === "Giving & Tithe" &&
             t2Keys.length > 0 &&
-            t2Keys.some(k => t.desc.toLowerCase().includes(k))
+            t2Keys.some(k => titheText(t).includes(k))
           );
           if (t2Txns.length === 0 && t2YTDSaved === 0) return null;
           return (
@@ -5253,7 +5254,7 @@ const NAV = [
   { id:"settings",     label:"Settings",     emoji:"\u{2699}\u{FE0F}" },
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
-const APP_VERSION = "0.1.3";
+const APP_VERSION = "0.1.4";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",

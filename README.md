@@ -49,6 +49,7 @@ Tips are saved per month, and the UI can display the last AI prompt used for the
 ## Repository
 
 - GitHub: https://github.com/xKillerbees/family-budget-dashboard
+- Changelog: https://github.com/xKillerbees/family-budget-dashboard/blob/main/CHANGELOG.md
 
 ## Local Development
 

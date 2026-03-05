@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.4] - 2026-03-05
+
+### Added
+- README now includes a direct link to the project changelog on GitHub.
+
+### Fixed
+- Tithe keyword matching now evaluates both transaction description and note text for:
+  - 1st Tithe monthly/YTD calculations
+  - 2nd Tithe monthly/YTD calculations
+  - Current-month Tithe breakdown lists
+
 ## [0.1.3] - 2026-03-05
 
 ### Added
