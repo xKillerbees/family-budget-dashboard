@@ -460,7 +460,7 @@ function Summary({wide, isMobile}) {
                             <div style={{height:"100%",width:`${targetPct}%`,background:r.color,borderRadius:99,transition:"width .4s"}}/>
                           </div>
                           <div style={{fontSize:11,color:targetDelta >= 0 ? "#22c55e" : "#ef4444",marginTop:4,fontWeight:700,fontVariantNumeric:"tabular-nums"}}>
-                            {targetDelta >= 0 ? `${fmt(targetDelta)} remaining` : `${fmt(Math.abs(targetDelta))} over`} ({Math.round((displayVal / r.kc) * 100)}%)
+                            {targetDelta >= 0 ? `${fmt(targetDelta)} remains` : `${fmt(Math.abs(targetDelta))} over`} ({Math.round((displayVal / r.kc) * 100)}%)
                           </div>
                         </div>
                       )}
@@ -566,7 +566,7 @@ function Summary({wide, isMobile}) {
                         {displayVal === 0 ? "$0" : fmt(displayVal)}
                         {r.kc && (
                           <div style={{fontSize:10,color:targetDelta >= 0 ? "#22c55e" : "#ef4444",fontWeight:700,marginTop:2}}>
-                            {targetDelta >= 0 ? `${fmt(targetDelta)} remaining` : `${fmt(Math.abs(targetDelta))} over`}
+                            {targetDelta >= 0 ? `${fmt(targetDelta)} remains` : `${fmt(Math.abs(targetDelta))} over`}
                           </div>
                         )}
                       </div>
@@ -981,8 +981,24 @@ function Scenarios({ wide, isMobile }) {
           <Card>
             <Label>Monthly Surplus Step-Down</Label>
             <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={waterfallSteps} barSize={wide?32:20} margin={{left:0,right:12,top:20,bottom:0}}>
-                <XAxis dataKey="label" tick={{fontSize:wide?11:9,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>v.slice(0,12)} interval={0}/>
+              <BarChart data={waterfallSteps} barSize={wide?32:20} margin={{left:0,right:12,top:20,bottom:waterfallSteps.length>8?20:6}}>
+                <XAxis
+                  dataKey="label"
+                  tick={{fontSize:waterfallSteps.length>8?10:(wide?11:9),fill:"#93a4c3"}}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={v => {
+                    const s = String(v || "");
+                    const max = waterfallSteps.length > 8 ? 10 : 14;
+                    return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+                  }}
+                  interval={0}
+                  angle={waterfallSteps.length>8?-20:0}
+                  textAnchor={waterfallSteps.length>8?"end":"middle"}
+                  height={waterfallSteps.length>8?56:30}
+                  tickMargin={waterfallSteps.length>8?10:6}
+                  minTickGap={6}
+                />
                 <YAxis tick={{fontSize:11,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(Math.abs(v)/1000).toFixed(0)}k`} width={52}/>
                 <ReferenceLine y={0} stroke={ACCENT} strokeDasharray="4 3" label={{value:"Break-even",fill:ACCENT,fontSize:10,position:"right"}}/>
                 <Tooltip content={<Tip/>} cursor={{fill:"transparent"}}/>
@@ -1014,7 +1030,7 @@ function Scenarios({ wide, isMobile }) {
                       </div>
                     </div>
                     <div style={{textAlign:"right"}}>
-                      <div style={{fontSize:22,fontWeight:900,color:col,fontVariantNumeric:"tabular-nums"}}>{sur>=0?"+":"−"}{fmt(Math.abs(sur))}</div>
+                      <div style={{fontSize:22,fontWeight:900,color:sur>=0?"#22c55e":"#ef4444",fontVariantNumeric:"tabular-nums"}}>{sur>=0?"+":"−"}{fmt(Math.abs(sur))}</div>
                       <div style={{fontSize:11,color:MUTED}}>monthly surplus</div>
                     </div>
                   </div>
@@ -5237,7 +5253,7 @@ const NAV = [
   { id:"settings",     label:"Settings",     emoji:"\u{2699}\u{FE0F}" },
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
-const APP_VERSION = "0.1.2";
+const APP_VERSION = "0.1.3";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",

@@ -2,6 +2,10 @@
 
 React + Vite budget dashboard for tracking spending, payoffs, scenarios, and monthly trends.
 
+## Live Demo
+
+- [https://xkillerbees.github.io/family-budget-dashboard/](https://xkillerbees.github.io/family-budget-dashboard/)
+
 ## Privacy
 
 - All transactions, settings, and API keys are stored in browser `localStorage`.

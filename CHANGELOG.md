@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.3] - 2026-03-05
+
+### Added
+- Restored Live Demo link in README.
+
+### Changed
+- Scenario waterfall step-card surplus value now uses sign-based color only (green positive, red negative).
+- Scenario waterfall x-axis labels improved for dense data (better contrast, truncation, angled layout).
+- Summary breakdown target wording updated from `remaining` to `remains`.
+
+### Fixed
+- Transactions list and totals now consistently render cents (`$X.XX`).
+- Transaction add-form messages now support manual dismiss and auto-clear on new actions.
+
 ## [0.1.2] - 2026-03-05
 
 ### Added
