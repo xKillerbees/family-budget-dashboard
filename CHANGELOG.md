@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased] - 2026-03-05
+## [0.1.0] - 2026-03-05
 
 ### Added
 - Month-scoped AI tips storage and retrieval (`budget_ai_tips_by_month`).
