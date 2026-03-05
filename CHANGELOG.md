@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.1] - 2026-03-05
+
+### Added
+- Settings toggle to hide `$0` categories in the Summary breakdown table/cards.
+
+### Changed
+- Summary target delta wording now shows `over` instead of `over target`.
+- Categories vendor chart and vendor list support multi-select with aggregated selected totals.
+- Desktop layout now uses page scrolling (no internal sidebar scroll container).
+
+### Fixed
+- Tithe tracker now reacts correctly to updated keyword settings for both 1st and 2nd tithe calculations.
+- 2nd Tithe keyword matching now evaluates both checking and credit-card tithe transactions consistently.
+- Tithe month breakdown totals now show current-month matched totals (not YTD in the month footer).
+
 ## [0.1.0] - 2026-03-05
 
 ### Added

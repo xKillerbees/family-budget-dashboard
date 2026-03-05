@@ -341,7 +341,7 @@ function CashFlowSankey({ viewMode }) {
 function Summary({wide, isMobile}) {
   const [view, setView] = useState("norm");
   const [expandedCat, setExpandedCat] = useState(null);
-  const { summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus, takeHome, selectedMonth, dashName, oneTimes } = useBudget();
+  const { summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus, takeHome, selectedMonth, dashName, oneTimes, hideZeroSummaryCats } = useBudget();
 
   // Merge all transactions for the expandable drill-down
   const ALL_TXNS = useMemo(() => [
@@ -367,6 +367,9 @@ function Summary({wide, isMobile}) {
     const vb = view==="norm" ? b.norm : (b.checking+b.cc);
     return vb - va;
   });
+  const breakdownRows = hideZeroSummaryCats
+    ? sortedSummaryRows.filter(r => (view==="norm" ? r.norm : (r.checking + r.cc)) !== 0)
+    : sortedSummaryRows;
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       <Card glow="#ef4444">
@@ -416,7 +419,7 @@ function Summary({wide, isMobile}) {
           {isMobile ? (
             /* ── MOBILE: card rows, no column overflow ── */
             <>
-              {sortedSummaryRows.map((r,i)=>{
+              {breakdownRows.map((r,i)=>{
                 const displayVal = view==="norm" ? r.norm : (r.checking+r.cc);
                 const over = r.kc && displayVal > r.kc;
                 const pct  = takeHome > 0 ? (displayVal / takeHome) * 100 : 0;
@@ -451,8 +454,8 @@ function Summary({wide, isMobile}) {
                           <div style={{height:3,borderRadius:99,background:r.color+"22",overflow:"hidden"}}>
                             <div style={{height:"100%",width:`${targetPct}%`,background:r.color,borderRadius:99,transition:"width .4s"}}/>
                           </div>
-                          <div style={{fontSize:11,color:r.color,marginTop:4,fontWeight:700,fontVariantNumeric:"tabular-nums"}}>
-                            {targetDelta >= 0 ? `${fmt(targetDelta)} to target` : `${fmt(Math.abs(targetDelta))} over target`} ({Math.round((displayVal / r.kc) * 100)}%)
+                          <div style={{fontSize:11,color:targetDelta >= 0 ? "#22c55e" : "#ef4444",marginTop:4,fontWeight:700,fontVariantNumeric:"tabular-nums"}}>
+                            {targetDelta >= 0 ? `${fmt(targetDelta)} remaining` : `${fmt(Math.abs(targetDelta))} over`} ({Math.round((displayVal / r.kc) * 100)}%)
                           </div>
                         </div>
                       )}
@@ -528,7 +531,7 @@ function Summary({wide, isMobile}) {
                   <div key={i} style={{fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:".4px",textAlign:i>1?"right":"left"}}>{h}</div>
                 ))}
               </div>
-              {sortedSummaryRows.map((r,i)=>{
+              {breakdownRows.map((r,i)=>{
                 const displayVal = view==="norm" ? r.norm : (r.checking+r.cc);
                 const over = r.kc && displayVal > r.kc;
                 const targetDelta = r.kc ? (r.kc - displayVal) : null;
@@ -557,8 +560,8 @@ function Summary({wide, isMobile}) {
                       <div style={{textAlign:"right",fontSize:14,fontWeight:700,color:isOpen?r.color:TEXT,fontVariantNumeric:"tabular-nums"}}>
                         {displayVal === 0 ? "$0" : fmt(displayVal)}
                         {r.kc && (
-                          <div style={{fontSize:10,color:r.color,fontWeight:700,marginTop:2}}>
-                            {targetDelta >= 0 ? `${fmt(targetDelta)} to target` : `${fmt(Math.abs(targetDelta))} over`}
+                          <div style={{fontSize:10,color:targetDelta >= 0 ? "#22c55e" : "#ef4444",fontWeight:700,marginTop:2}}>
+                            {targetDelta >= 0 ? `${fmt(targetDelta)} remaining` : `${fmt(Math.abs(targetDelta))} over`}
                           </div>
                         )}
                       </div>
@@ -1569,7 +1572,7 @@ function Payoffs({wide}) {
 function Categories({wide, isMobile}) {
   const { summaryRows, selectedMonth, checkTxns, ccTxns, groceryGoal, setGroceryGoal } = useBudget();
   const [selectedCat, setSelectedCat] = useState("Groceries");
-  const [spotlight, setSpotlight] = useState(null);
+  const [selectedVendors, setSelectedVendors] = useState([]);
   const [expandedVendor, setExpandedVendor] = useState(null);
 
   const catRow = summaryRows.find(r => r.cat === selectedCat) || summaryRows[0];
@@ -1614,11 +1617,13 @@ function Categories({wide, isMobile}) {
     }).sort((a,b) => b.total - a.total);
   }, [checkTxns, ccTxns, selectedMonth, cat]); // eslint-disable-line
 
-  // Reset spotlight/expand when category changes
-  useEffect(() => { setSpotlight(null); setExpandedVendor(null); }, [cat]);
+  // Reset selection/expand when category changes
+  useEffect(() => { setSelectedVendors([]); setExpandedVendor(null); }, [cat]);
 
   const total = vendors.reduce((s,x) => s + x.total, 0);
-  const selectedTotal = spotlight ? (vendors.find(v => v.name === spotlight)?.total || 0) : total;
+  const selectedTotal = selectedVendors.length
+    ? vendors.filter(v => selectedVendors.includes(v.name)).reduce((s, v) => s + v.total, 0)
+    : total;
   const goal = isGroceries ? groceryGoal : (catRow ? catRow.kc : null);
   const gap = goal ? total - goal : null;
   const gapColor = gap == null ? color : gap > 0 ? "#ef4444" : "#22c55e";
@@ -1703,10 +1708,15 @@ function Categories({wide, isMobile}) {
 
           {/* Bar chart */}
           <Card>
-            <Label>{isGroceries?"Spending by Store":"Spending by Vendor"} · Click to spotlight</Label>
+            <Label>{isGroceries?"Spending by Store":"Spending by Vendor"} · Click to select multiple</Label>
             <ResponsiveContainer width="100%" height={190}>
               <BarChart data={vendors.map(s=>({name:s.name,amount:s.total}))} barSize={wide?36:24} margin={{left:0,right:10,top:20,bottom:0}}
-                onClick={d=>{ if(d?.activeTooltipIndex!=null) setSpotlight(vendors[d.activeTooltipIndex]?.name||null); }}>
+                onClick={d=>{
+                  if(d?.activeTooltipIndex==null) return;
+                  const vendor = vendors[d.activeTooltipIndex]?.name;
+                  if(!vendor) return;
+                  setSelectedVendors(prev => prev.includes(vendor) ? prev.filter(v => v !== vendor) : [...prev, vendor]);
+                }}>
                 <XAxis dataKey="name" tick={{fontSize:9,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>v.slice(0,7)} interval={0}/>
                 <YAxis tick={{fontSize:10,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v}`} width={52}/>
                 <Tooltip content={<Tip/>} cursor={{fill:"transparent"}}/>
@@ -1718,17 +1728,17 @@ function Categories({wide, isMobile}) {
                     style={{fontSize:10,fontWeight:700,fill:MUTED}}
                   />
                   {vendors.map((s,i)=>(
-                    <Cell key={i} fill={s.color} opacity={spotlight===null||spotlight===s.name?1:0.2}/>
+                    <Cell key={i} fill={s.color} opacity={selectedVendors.length===0||selectedVendors.includes(s.name)?1:0.2}/>
                   ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
-            {spotlight && (
+            {selectedVendors.length > 0 && (
               <div style={{marginTop:8,display:"flex",alignItems:"center",gap:8}}>
                 <span style={{fontSize:12,color:MUTED}}>
-                  Spotlighting: <strong style={{color:TEXT}}>{spotlight}</strong> · {fmt(selectedTotal)} of {fmt(total)}
+                  Selected: <strong style={{color:TEXT}}>{selectedVendors.length}</strong> vendor{selectedVendors.length!==1?"s":""} · {fmt(selectedTotal)} of {fmt(total)}
                 </span>
-                <button onClick={()=>setSpotlight(null)} style={{padding:"2px 8px",borderRadius:6,background:BORDER,border:`1px solid ${BORDER}`,color:MUTED,fontSize:11,cursor:"pointer"}}>Clear ✕</button>
+                <button onClick={()=>setSelectedVendors([])} style={{padding:"2px 8px",borderRadius:6,background:BORDER,border:`1px solid ${BORDER}`,color:MUTED,fontSize:11,cursor:"pointer"}}>Clear</button>
               </div>
             )}
           </Card>
@@ -1737,13 +1747,13 @@ function Categories({wide, isMobile}) {
           <Card>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
               <Label>{isGroceries?"By Store":"By Vendor"}</Label>
-              {spotlight && <Tag color={color}>Spotlighting {spotlight} · {fmt(selectedTotal)}</Tag>}
+              {selectedVendors.length > 0 && <Tag color={color}>Selected {selectedVendors.length} · {fmt(selectedTotal)}</Tag>}
             </div>
             <div style={{display:"grid",gridTemplateColumns:wide?"1fr 1fr":"1fr",gap:wide?"0 32px":0}}>
               {vendors.map(s=>{
                 const pct=(s.total/total)*100;
-                const isSpot=spotlight===s.name;
-                const isOther=spotlight!==null&&spotlight!==s.name;
+                const isSpot=selectedVendors.includes(s.name);
+                const isOther=selectedVendors.length>0&&!isSpot;
                 const isExp=expandedVendor===s.name;
                 return (
                   <div key={s.name} style={{
@@ -1753,7 +1763,7 @@ function Categories({wide, isMobile}) {
                     opacity:isOther?0.35:1,transition:"all .2s",
                   }}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",cursor:"pointer"}}
-                      onClick={()=>setSpotlight(isSpot?null:s.name)}>
+                      onClick={()=>setSelectedVendors(prev => prev.includes(s.name) ? prev.filter(v => v !== s.name) : [...prev, s.name])}>
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
                         <div style={{width:10,height:10,borderRadius:3,background:s.color,flexShrink:0}}/>
                         <span style={{fontSize:20}}>{s.icon}</span>
@@ -2673,10 +2683,11 @@ function TitheTracker({ wide, isMobile }) {
   // Derive actual tithe data from transactions by month
   const ORDER = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   const SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const t1Keys = useMemo(() => (titheSettings.t1Keywords || "").split(",").map(k => k.trim().toLowerCase()).filter(Boolean), [titheSettings.t1Keywords]);
+  const t2Keys = useMemo(() => (titheSettings.t2Keywords || "").split(",").map(k => k.trim().toLowerCase()).filter(Boolean), [titheSettings.t2Keywords]);
 
   // 1st Tithe: Giving & Tithe category spending per month (church transfers + Hillcrest etc)
   const T1_ACTUAL = useMemo(() => {
-    const t1Keys = titheSettings.t1Keywords.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
     return availableMonths.map(month => {
       const paid = [...checkTxns, ...ccTxns]
         .filter(t => {
@@ -2688,19 +2699,18 @@ function TitheTracker({ wide, isMobile }) {
         .reduce((s, t) => s + t.amount, 0);
       return { month: SHORT[ORDER.indexOf(month)], paid, notes: "" };
     });
-  }, [checkTxns, ccTxns, availableMonths, titheSettings.t1Keywords]);
+  }, [checkTxns, ccTxns, availableMonths, t1Keys]);
 
   // 2nd Tithe: transfers to savings — matched by configurable keywords in desc
   const T2_ACTUAL = useMemo(() => {
-    const t2Keys = titheSettings.t2Keywords.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
     return availableMonths.map(month => {
-      const saved = checkTxns
-        .filter(t => t.month === month && t.cat === "Giving & Tithe" &&
+      const saved = [...checkTxns, ...ccTxns]
+        .filter(t => t.month === month && t.cat === "Giving & Tithe" && t2Keys.length > 0 &&
           t2Keys.some(k => t.desc.toLowerCase().includes(k)))
         .reduce((s, t) => s + t.amount, 0);
       return { month: SHORT[ORDER.indexOf(month)], saved, notes: "" };
     });
-  }, [checkTxns, availableMonths, titheSettings.t2Keywords]);
+  }, [checkTxns, ccTxns, availableMonths, t2Keys]);
 
   const currentMonth = availableMonths.length;
 
@@ -2733,7 +2743,7 @@ function TitheTracker({ wide, isMobile }) {
     }
     const isActual = i < T2_ACTUAL.length;
     const actualBal = isActual ? carry + T2_ACTUAL.slice(0,i+1).reduce((s,x)=>s+x.saved,0) : null;
-    return { month: m, projected: Math.round(balance), actual: actualBal ? Math.round(actualBal) : null, isFeast: i === FEAST_MONTH };
+    return { month: m, projected: Math.round(balance), actual: actualBal != null ? Math.round(actualBal) : null, isFeast: i === FEAST_MONTH };
   });
 
   // ── 1st tithe full-year expected vs actual ─────────────────────────────────
@@ -2807,7 +2817,8 @@ function TitheTracker({ wide, isMobile }) {
         {T1_ACTUAL.some(m => m.paid > 0) && (() => {
           const currentMonthName = availableMonths[availableMonths.length - 1] || "January";
           const t1Txns = [...checkTxns, ...ccTxns].filter(t =>
-            t.month === currentMonthName && t.cat === "Giving & Tithe"
+            t.month === currentMonthName && t.cat === "Giving & Tithe" &&
+            (t1Keys.length === 0 || t1Keys.some(k => t.desc.toLowerCase().includes(k)))
           );
           if (t1Txns.length === 0) return null;
           return (
@@ -2818,7 +2829,7 @@ function TitheTracker({ wide, isMobile }) {
                   padding:"7px 10px", borderRadius:8, background:i%2===0?SURFACE:BG, marginBottom:3}}>
                   <div style={{fontSize:12, color:TEXT}}>{t.desc}</div>
                   <div style={{display:"flex", alignItems:"center", gap:10}}>
-                    <Tag color="#3b82f6">Checking</Tag>
+                    <Tag color={t.id?.startsWith("cc") ? "#6366f1" : "#3b82f6"}>{t.id?.startsWith("cc") ? "Credit Card" : "Checking"}</Tag>
                     <span style={{fontSize:13, fontWeight:700, color:"#7c6af7", fontVariantNumeric:"tabular-nums"}}>{fmt(t.amount)}</span>
                   </div>
                 </div>
@@ -2826,7 +2837,7 @@ function TitheTracker({ wide, isMobile }) {
               <div style={{display:"flex", justifyContent:"space-between", padding:"9px 10px",
                 borderTop:`1px solid ${BORDER}`, marginTop:4}}>
                 <span style={{fontSize:12, fontWeight:700, color:MUTED}}>{currentMonthName} 1st Tithe total</span>
-                <span style={{fontSize:14, fontWeight:900, color:"#7c6af7", fontVariantNumeric:"tabular-nums"}}>{fmt(t1YTD)}</span>
+                <span style={{fontSize:14, fontWeight:900, color:"#7c6af7", fontVariantNumeric:"tabular-nums"}}>{fmt(t1Txns.reduce((s,t)=>s+t.amount,0))}</span>
               </div>
             </div>
           );
@@ -2837,7 +2848,7 @@ function TitheTracker({ wide, isMobile }) {
       <Card>
         <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14, flexWrap:"wrap", gap:8}}>
           <Label style={{marginBottom:0}}>🏕️ 2nd Tithe — 1st of October Feast (10%)</Label>
-          <Tag color="#f59e0b">Feast: Oct 2026</Tag>
+          <Tag color="#f59e0b">Feast: {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][titheSettings.feastMonth]} 2026</Tag>
         </div>
 
         <div style={{display:"grid", gridTemplateColumns:wide?"repeat(4,1fr)":"1fr 1fr", gap:10, marginBottom:18}}>
@@ -2886,11 +2897,10 @@ function TitheTracker({ wide, isMobile }) {
         {/* 2nd Tithe breakdown — derived from imported transactions */}
         {(() => {
           const currentMonthName = availableMonths[availableMonths.length - 1] || "January";
-          const t2Txns = checkTxns.filter(t =>
+          const t2Txns = [...checkTxns, ...ccTxns].filter(t =>
             t.month === currentMonthName && t.cat === "Giving & Tithe" &&
-            (t.desc.toLowerCase().includes("8500") ||
-             t.desc.toLowerCase().includes("2nd tithe") ||
-             t.desc.toLowerCase().includes("feast"))
+            t2Keys.length > 0 &&
+            t2Keys.some(k => t.desc.toLowerCase().includes(k))
           );
           if (t2Txns.length === 0 && t2YTDSaved === 0) return null;
           return (
@@ -2901,19 +2911,19 @@ function TitheTracker({ wide, isMobile }) {
                   padding:"7px 10px", borderRadius:8, background:i%2===0?SURFACE:BG, marginBottom:3}}>
                   <div style={{fontSize:12, color:TEXT}}>{t.desc}</div>
                   <div style={{display:"flex", alignItems:"center", gap:10}}>
-                    <Tag color="#3b82f6">Checking</Tag>
+                    <Tag color={t.id?.startsWith("cc") ? "#6366f1" : "#3b82f6"}>{t.id?.startsWith("cc") ? "Credit Card" : "Checking"}</Tag>
                     <span style={{fontSize:13, fontWeight:700, color:"#f59e0b", fontVariantNumeric:"tabular-nums"}}>{fmt(t.amount)}</span>
                   </div>
                 </div>
               )) : (
                 <div style={{fontSize:12,color:MUTED,padding:"8px 10px"}}>
-                  No 2nd tithe transfers found yet. Transactions with "8500", "2nd tithe", or "feast" in the description will appear here.
+                  No 2nd tithe transfers found yet for the current keywords.
                 </div>
               )}
               <div style={{display:"flex", justifyContent:"space-between", padding:"9px 10px",
                 borderTop:`1px solid ${BORDER}`, marginTop:4}}>
                 <span style={{fontSize:12, fontWeight:700, color:MUTED}}>{currentMonthName} 2nd Tithe saved</span>
-                <span style={{fontSize:14, fontWeight:900, color:"#f59e0b", fontVariantNumeric:"tabular-nums"}}>{fmt(t2YTDSaved)}</span>
+                <span style={{fontSize:14, fontWeight:900, color:"#f59e0b", fontVariantNumeric:"tabular-nums"}}>{fmt(t2Txns.reduce((s,t)=>s+t.amount,0))}</span>
               </div>
             </div>
           );
@@ -3379,6 +3389,7 @@ function Settings({ isMobile }) {
     dashName, setDashName,
     showTithe, setShowTithe,
     showABA,   setShowABA,
+    hideZeroSummaryCats, setHideZeroSummaryCats,
     customCats, setCustomCats, allCats,
     abaSettings, setAbaSettings,
     titheSettings, setTitheSettings,
@@ -3489,6 +3500,7 @@ function Settings({ isMobile }) {
         {[
           { key:"tithe", label:"Tithe Tracker", emoji:"🙏", desc:"Giving & Tithe category + Tithe tab", val:showTithe, set:setShowTithe },
           { key:"aba",   label:"ABA Planner",   emoji:"🧩", desc:"ABA Therapy category + ABA tab",   val:showABA,   set:setShowABA   },
+          { key:"hideZeroSummary", label:"Hide $0 Summary Rows", emoji:"📉", desc:"Hide zero-amount categories in Summary breakdown", val:hideZeroSummaryCats, set:setHideZeroSummaryCats },
         ].map(f => (
           <div key={f.key} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderRadius:10,background:BG,border:`1px solid ${f.val?"#7c6af744":BORDER}`,marginBottom:8,opacity:f.val?1:0.6,transition:"all .15s"}}>
             <span style={{fontSize:20}}>{f.emoji}</span>
@@ -4593,7 +4605,7 @@ const NAV = [
   { id:"settings",  label:"Settings",   emoji:"⚙️" },
 ];
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.0";
+const APP_VERSION = "0.1.1";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
@@ -4686,6 +4698,7 @@ export default function BudgetDashboardClean() {
   const [dashName, setDashName] = useState(() => ls.get("budget_dashName") || "My Budget");
   const [showTithe, setShowTithe] = useState(() => ls.get("budget_showTithe") !== "0");
   const [showABA, setShowABA]   = useState(() => ls.get("budget_showABA")   !== "0");
+  const [hideZeroSummaryCats, setHideZeroSummaryCats] = useState(() => ls.get("budget_hideZeroSummaryCats") === "1");
   const [customCats, setCustomCats] = useState(() => {
     const raw = ls.getJSON("budget_customCats", []);
     return raw.map(c => typeof c === "string" ? { name: c, icon: "📁", color: "#94a3b8" } : c);
@@ -4706,6 +4719,7 @@ export default function BudgetDashboardClean() {
   useEffect(() => { ls.set("budget_dashName",  dashName); }, [dashName]);
   useEffect(() => { ls.set("budget_showTithe", showTithe ? "1" : "0"); }, [showTithe]);
   useEffect(() => { ls.set("budget_showABA",   showABA   ? "1" : "0"); }, [showABA]);
+  useEffect(() => { ls.set("budget_hideZeroSummaryCats", hideZeroSummaryCats ? "1" : "0"); }, [hideZeroSummaryCats]);
 
   // Redirect away from tabs that have been toggled off
   useEffect(() => {
@@ -4839,6 +4853,7 @@ export default function BudgetDashboardClean() {
     dashName, setDashName,
     showTithe, setShowTithe,
     showABA,   setShowABA,
+    hideZeroSummaryCats, setHideZeroSummaryCats,
     customCats, setCustomCats, allCats, catColorsAll,
     abaSettings, setAbaSettings,
     titheSettings, setTitheSettings,
@@ -4955,7 +4970,7 @@ export default function BudgetDashboardClean() {
         </>
       ) : (
         <div style={{display:"flex",width:"100%",minHeight:"100vh"}}>
-          <div style={{width:240,background:"#0f141e",borderRight:`1px solid ${BORDER}`,display:"flex",flexDirection:"column",position:"sticky",top:0,height:"100vh",overflowY:"auto",flexShrink:0}}>
+          <div style={{width:240,background:"#0f141e",borderRight:`1px solid ${BORDER}`,display:"flex",flexDirection:"column",flexShrink:0}}>
             <div style={{padding:"24px 20px 16px",borderBottom:`1px solid ${BORDER}`}}>
               <div style={{fontSize:20,fontWeight:900,color:ACCENT}}>{dashName}</div>
               <div style={{fontSize:12,color:MUTED,marginTop:3,marginBottom:12}}>2026</div>
@@ -5003,7 +5018,7 @@ export default function BudgetDashboardClean() {
               </div>
             </div>
           </div>
-          <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",overflowY:"auto"}}>
+          <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column"}}>
             <div style={{borderBottom:`1px solid ${BORDER}`,padding:"16px 32px",display:"flex",alignItems:"center",justifyContent:"space-between",background:BG+"cc",backdropFilter:"blur(12px)",position:"sticky",top:0,zIndex:10}}>
               <div>
                 <div style={{fontSize:22,fontWeight:800,color:TEXT}}>{visibleNav.find(n=>n.id===page)?.label}</div>
