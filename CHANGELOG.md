@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.9] - 2026-03-05
+
+### Changed
+- Meal-plan grocery schema and prompt no longer require `image_url`, reducing format failures from over-constrained AI output.
+- Grocery list rendering no longer depends on item image URLs.
+
+### Fixed
+- Meal-plan debug logging now preserves raw model output and repair-pass outputs in saved responses.
+- Latest saved raw AI response is now always visible in a copyable debug text area.
+
 ## [0.1.8] - 2026-03-05
 
 ### Fixed

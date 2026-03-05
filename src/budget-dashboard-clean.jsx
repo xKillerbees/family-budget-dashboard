@@ -2725,7 +2725,6 @@ function MealPlanningPage({ wide }) {
       return {
         ...it,
         store_costs: sc,
-        image_url: normalizeUrl(it?.image_url || ""),
         price_proof_links: links.length ? links : fallbackProofLinks(it?.item, Object.keys(sc)),
       };
     }) : [];
@@ -2753,6 +2752,8 @@ function MealPlanningPage({ wide }) {
     if (!ANTHROPIC_API_KEY) { setPlanErr("Add an Anthropic API key in Settings to use AI meal planning."); return; }
     setGenerating(true);
     setPlanErr(null);
+    const debugResponses = [];
+    let promptUsed = "";
     const parseAiJson = (rawText) => {
       const raw = String(rawText || "").trim();
       if (!raw) throw new Error("AI returned an empty response.");
@@ -2846,7 +2847,7 @@ Hard constraints:
 3) Prioritize reusing ingredients across meals to cut waste and stay under budget.
 4) Include concise substitutions for expensive items.
 5) Every day must include recipe links for breakfast/lunch/dinner.
-6) Every grocery item must include an image_url and at least one price_proof_links URL to show where the price came from.
+6) Every grocery item must include at least one price_proof_links URL to show where the price came from.
 7) Prefer store-specific proof links close to the ZIP code when possible.
 
 Return ONLY valid JSON with this shape:
@@ -2857,13 +2858,15 @@ Return ONLY valid JSON with this shape:
   "estimated_monthly_total": number,
   "meals": [{"day":"Mon","breakfast":"...","lunch":"...","dinner":"...","recipe_links":{"breakfast":"https://...","lunch":"https://...","dinner":"https://..."}}],
   "grocery_items": [
-    {"item":"Chicken breast","quantity":"4 lb","category":"Protein","store_costs":{"Walmart":14.5,"Aldi":13.2},"best_store":"Aldi","best_cost":13.2,"meal_usage":"2 dinners + 1 lunch","image_url":"https://...","price_proof_links":["https://...","https://..."]}
+    {"item":"Chicken breast","quantity":"4 lb","category":"Protein","store_costs":{"Walmart":14.5,"Aldi":13.2},"best_store":"Aldi","best_cost":13.2,"meal_usage":"2 dinners + 1 lunch","price_proof_links":["https://...","https://..."]}
   ],
   "prep_tips": ["..."],
   "waste_reduction_tips": ["..."]
 }`;
+      promptUsed = prompt;
 
       const { raw, stopReason } = await callAnthropic(prompt, 4200);
+      debugResponses.push({ label: "raw_model_response", text: raw });
       let parsedJson;
       let responseToSave = raw;
       try {
@@ -2880,6 +2883,7 @@ If any field is unknown, use empty strings/arrays instead of omitting keys.
 TEXT TO REPAIR:
 ${raw}`;
         const repairedPass1 = await callAnthropic(repairPrompt, 2600);
+        debugResponses.push({ label: "repair_pass_1", text: repairedPass1.raw });
         try {
           parsedJson = parseAiJson(repairedPass1.raw);
           responseToSave = repairedPass1.raw;
@@ -2890,10 +2894,15 @@ No prose. No markdown.
 RAW INPUT:
 ${raw}`;
           const repairedPass2 = await callAnthropic(repairPrompt2, 2600);
+          debugResponses.push({ label: "repair_pass_2", text: repairedPass2.raw });
           parsedJson = parseAiJson(repairedPass2.raw);
           responseToSave = repairedPass2.raw;
         }
       }
+      const debugBlob = debugResponses
+        .filter(x => String(x?.text || "").trim())
+        .map((x, i) => `--- ${x.label || `response_${i + 1}`} ---\n${String(x.text || "").trim()}`)
+        .join("\n\n");
       const parsed = normalizePlan(parsedJson);
       setAiPlanByMonth(prev => ({ ...prev, [selectedMonth]: parsed }));
       setAiResponsesByMonth(prev => ({
@@ -2902,7 +2911,7 @@ ${raw}`;
           {
             at: new Date().toISOString(),
             prompt,
-            response: responseToSave.trim(),
+            response: debugBlob || responseToSave.trim(),
             summary: parsed?.summary || "AI meal plan response",
           },
           ...(prev[selectedMonth] || []),
@@ -2910,6 +2919,24 @@ ${raw}`;
       }));
     } catch (e) {
       const msg = String(e?.message || "");
+      const debugBlob = debugResponses
+        .filter(x => String(x?.text || "").trim())
+        .map((x, i) => `--- ${x.label || `response_${i + 1}`} ---\n${String(x.text || "").trim()}`)
+        .join("\n\n");
+      if (debugBlob) {
+        setAiResponsesByMonth(prev => ({
+          ...prev,
+          [selectedMonth]: [
+            {
+              at: new Date().toISOString(),
+              prompt: promptUsed || "Prompt unavailable.",
+              response: debugBlob,
+              summary: `AI failure debug (${msg || "unknown error"})`,
+            },
+            ...(prev[selectedMonth] || []),
+          ].slice(0, 6),
+        }));
+      }
       if (/max tokens|truncated/i.test(msg)) {
         setPlanErr("AI response was truncated. Reduce goals text or stores and try again.");
       } else if (/not valid json|empty response/i.test(msg)) {
@@ -3052,7 +3079,7 @@ ${raw}`;
           <Card>
             <Label>Grocery List + Store Cost Estimates</Label>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
-              <div style={{fontSize:11,color:MUTED}}>Each item includes price proof links and an image URL when available.</div>
+              <div style={{fontSize:11,color:MUTED}}>Each item includes price proof links when available.</div>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <button onClick={copyShoppingList} style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${BORDER}`,background:BG,color:TEXT,fontSize:11,cursor:"pointer"}}>Copy shopping list</button>
                 {copyMsg && <span style={{fontSize:11,color:"#22c55e"}}>{copyMsg}</span>}
@@ -3060,17 +3087,10 @@ ${raw}`;
             </div>
             {(activePlan.grocery_items || []).length===0 ? <div style={{fontSize:12,color:MUTED}}>No grocery list returned.</div> : (activePlan.grocery_items || []).map((it,i)=>(
               <div key={i} style={{padding:"10px 2px",borderBottom:`1px solid ${i===activePlan.grocery_items.length-1?"transparent":BORDER}`}}>
-                <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
-                  {it.image_url ? (
-                    <a href={it.image_url} target="_blank" rel="noreferrer" style={{display:"inline-flex",flexShrink:0}}>
-                      <img src={it.image_url} alt={it.item || "grocery item"} style={{width:54,height:54,objectFit:"cover",borderRadius:8,border:`1px solid ${BORDER}`,background:BG}}/>
-                    </a>
-                  ) : <div style={{width:54,height:54,borderRadius:8,border:`1px solid ${BORDER}`,background:BG,flexShrink:0}}/>}
-                  <div style={{minWidth:0,flex:1}}>
-                    <div style={{fontSize:13,fontWeight:700,color:TEXT}}>{it.item} <span style={{fontSize:11,color:MUTED,fontWeight:400}}>({it.quantity || "qty n/a"})</span></div>
-                    <div style={{fontSize:11,color:MUTED,marginTop:2}}>{it.category || "General"} · {it.meal_usage || ""}</div>
-                    <div style={{fontSize:12,color:"#22c55e",fontWeight:800,marginTop:4}}>Best: {it.best_store || "n/a"} {it.best_cost!=null ? fmt(it.best_cost) : ""}</div>
-                  </div>
+                <div style={{minWidth:0,flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700,color:TEXT}}>{it.item} <span style={{fontSize:11,color:MUTED,fontWeight:400}}>({it.quantity || "qty n/a"})</span></div>
+                  <div style={{fontSize:11,color:MUTED,marginTop:2}}>{it.category || "General"} · {it.meal_usage || ""}</div>
+                  <div style={{fontSize:12,color:"#22c55e",fontWeight:800,marginTop:4}}>Best: {it.best_store || "n/a"} {it.best_cost!=null ? fmt(it.best_cost) : ""}</div>
                 </div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
                   {Object.entries(it.store_costs || {}).map(([sn,sv])=>(
@@ -3105,11 +3125,19 @@ ${raw}`;
         />
       </Card>
       <Card>
-        <Label>Saved AI Responses � {selectedMonth}</Label>
+        <Label>Saved AI Responses - {selectedMonth}</Label>
         {activeResponses.length === 0 ? (
           <div style={{fontSize:12,color:MUTED}}>No saved meal-plan responses for this month yet.</div>
         ) : (
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:10,padding:"10px 12px"}}>
+              <div style={{fontSize:12,fontWeight:700,color:TEXT,marginBottom:6}}>Latest raw response (copy/paste for debug)</div>
+              <textarea
+                readOnly
+                value={activeResponses[0]?.response || ""}
+                style={{width:"100%",minHeight:150,resize:"vertical",background:"#0b1020",border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 10px",color:"#cbd5e1",fontSize:11,outline:"none",fontFamily:"ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace"}}
+              />
+            </div>
             {activeResponses.map((r, idx) => (
               <div key={idx} style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:10,padding:"10px 12px"}}>
                 <div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:5,flexWrap:"wrap"}}>
@@ -3117,9 +3145,8 @@ ${raw}`;
                   <div style={{fontSize:11,color:MUTED}}>{new Date(r.at).toLocaleString()}</div>
                 </div>
                 <details>
-                  <summary style={{fontSize:12,color:ACCENT,cursor:"pointer"}}>Show prompt and response</summary>
+                  <summary style={{fontSize:12,color:ACCENT,cursor:"pointer"}}>Show prompt</summary>
                   <div style={{marginTop:8,fontSize:11,color:MUTED,whiteSpace:"pre-wrap"}}>{r.prompt || "No prompt saved."}</div>
-                  <div style={{marginTop:8,fontSize:11,color:TEXT,whiteSpace:"pre-wrap"}}>{r.response || "No response text saved."}</div>
                 </details>
               </div>
             ))}
