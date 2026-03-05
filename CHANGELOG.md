@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.7] - 2026-03-05
+
+### Fixed
+- Meal-plan generation now auto-retries malformed AI output with a JSON-repair pass before failing.
+- Saved AI response history now stores the repaired payload when fallback repair is used.
+
 ## [0.1.6] - 2026-03-05
 
 ### Fixed

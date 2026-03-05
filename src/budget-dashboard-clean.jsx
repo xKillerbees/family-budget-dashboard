@@ -2768,6 +2768,19 @@ function MealPlanningPage({ wide }) {
       }
       throw new Error("AI response was not valid JSON.");
     };
+    const callAnthropic = async (userPrompt, maxTokens = 3000) => {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_API_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:maxTokens, messages:[{role:"user",content:userPrompt}] }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const apiMsg = data?.error?.message || data?.error?.type || `HTTP ${res.status}`;
+        throw new Error(`AI request failed: ${apiMsg}`);
+      }
+      return (data.content || []).map(b => b?.text || "").join("\n").trim();
+    };
     try {
       const prompt = `Create a practical grocery meal plan JSON for a US household.
 Month: ${selectedMonth}
@@ -2807,18 +2820,18 @@ Return ONLY valid JSON with this shape:
   "waste_reduction_tips": ["..."]
 }`;
 
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method:"POST",
-        headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_API_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:3000, messages:[{role:"user",content:prompt}] }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        const apiMsg = data?.error?.message || data?.error?.type || `HTTP ${res.status}`;
-        throw new Error(`AI request failed: ${apiMsg}`);
+      const raw = await callAnthropic(prompt, 3000);
+      let parsedJson;
+      let responseToSave = raw;
+      try {
+        parsedJson = parseAiJson(raw);
+      } catch {
+        const repairPrompt = `Convert this text into strict valid JSON only. Do not add markdown, comments, or extra text.\n\n${raw}`;
+        const repaired = await callAnthropic(repairPrompt, 2200);
+        parsedJson = parseAiJson(repaired);
+        responseToSave = repaired;
       }
-      const raw = (data.content || []).map(b => b?.text || "").join("\n").trim();
-      const parsed = normalizePlan(parseAiJson(raw));
+      const parsed = normalizePlan(parsedJson);
       setAiPlanByMonth(prev => ({ ...prev, [selectedMonth]: parsed }));
       setAiResponsesByMonth(prev => ({
         ...prev,
@@ -2826,7 +2839,7 @@ Return ONLY valid JSON with this shape:
           {
             at: new Date().toISOString(),
             prompt,
-            response: raw.trim(),
+            response: responseToSave.trim(),
             summary: parsed?.summary || "AI meal plan response",
           },
           ...(prev[selectedMonth] || []),
@@ -5391,7 +5404,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.6";
+const APP_VERSION = "0.1.7";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
