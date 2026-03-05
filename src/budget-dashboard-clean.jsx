@@ -2753,6 +2753,21 @@ function MealPlanningPage({ wide }) {
     if (!ANTHROPIC_API_KEY) { setPlanErr("Add an Anthropic API key in Settings to use AI meal planning."); return; }
     setGenerating(true);
     setPlanErr(null);
+    const parseAiJson = (rawText) => {
+      const raw = String(rawText || "").trim();
+      if (!raw) throw new Error("AI returned an empty response.");
+      const unfenced = raw.replace(/```json|```/gi, "").trim();
+      const attempts = [];
+      attempts.push(unfenced);
+      const firstBrace = unfenced.indexOf("{");
+      const lastBrace = unfenced.lastIndexOf("}");
+      if (firstBrace >= 0 && lastBrace > firstBrace) attempts.push(unfenced.slice(firstBrace, lastBrace + 1));
+      for (const candidate of attempts) {
+        try { return JSON.parse(candidate); } catch {}
+        try { return JSON.parse(candidate.replace(/,\s*([}\]])/g, "$1")); } catch {}
+      }
+      throw new Error("AI response was not valid JSON.");
+    };
     try {
       const prompt = `Create a practical grocery meal plan JSON for a US household.
 Month: ${selectedMonth}
@@ -2798,8 +2813,12 @@ Return ONLY valid JSON with this shape:
         body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:3000, messages:[{role:"user",content:prompt}] }),
       });
       const data = await res.json();
-      const raw = data.content?.[0]?.text || "";
-      const parsed = normalizePlan(JSON.parse(raw.replace(/```json|```/g,"").trim()));
+      if (!res.ok) {
+        const apiMsg = data?.error?.message || data?.error?.type || `HTTP ${res.status}`;
+        throw new Error(`AI request failed: ${apiMsg}`);
+      }
+      const raw = (data.content || []).map(b => b?.text || "").join("\n").trim();
+      const parsed = normalizePlan(parseAiJson(raw));
       setAiPlanByMonth(prev => ({ ...prev, [selectedMonth]: parsed }));
       setAiResponsesByMonth(prev => ({
         ...prev,
@@ -2814,7 +2833,14 @@ Return ONLY valid JSON with this shape:
         ].slice(0, 6),
       }));
     } catch (e) {
-      setPlanErr("Could not generate meal plan. Please try again.");
+      const msg = String(e?.message || "");
+      if (/not valid json|empty response/i.test(msg)) {
+        setPlanErr("AI returned an invalid format. Try again with shorter goals/stores, then refresh tips and retry.");
+      } else if (msg) {
+        setPlanErr(msg);
+      } else {
+        setPlanErr("Could not generate meal plan. Please try again.");
+      }
     }
     setGenerating(false);
   };
@@ -5365,7 +5391,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.5";
+const APP_VERSION = "0.1.6";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",

@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.6] - 2026-03-05
+
+### Fixed
+- Meals AI generation now surfaces specific API failures instead of only showing a generic retry message.
+- Meal-plan response parsing is more resilient to fenced JSON, extra text, and trailing commas.
+- Improved fallback error messaging when AI returns empty or invalid JSON payloads.
+
 ## [0.1.5] - 2026-03-05
 
 ### Added
