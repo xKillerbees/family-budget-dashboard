@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, createContext, useContext, useRef } from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, ReferenceLine } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, ReferenceLine, LineChart, Line, AreaChart, Area, CartesianGrid, Legend, LabelList } from "recharts";
 
 // ── YOUR ANTHROPIC API KEY ────────────────────────────────────────────────────
 // Get one at https://console.anthropic.com → API Keys
@@ -37,7 +37,7 @@ const DEFAULT_TAKE_HOME = 0;
 const SUMMARY_ROWS = [
   // These auto-calculate from transactions above once you add them.
   // You can also set manual budgets (kc field) per category.
-  { cat:"Giving & Tithe",  checking:0, cc:0, norm:0, kc:0,    icon:"⛪", color:"#7c6af7", oneTime:0, notes:"" },
+  { cat:"Giving & Tithe",  checking:0, cc:0, norm:0, kc:600,  icon:"🙏", color:"#7c6af7", oneTime:0, notes:"" },
   { cat:"Housing",         checking:0, cc:0, norm:0, kc:2500, icon:"🏠", color:"#3b82f6", oneTime:0, notes:"" },
   { cat:"Groceries",       checking:0, cc:0, norm:0, kc:1200, icon:"🛒", color:"#f97316", oneTime:0, notes:"" },
   { cat:"Medical",         checking:0, cc:0, norm:0, kc:350,  icon:"🏥", color:"#ec4899", oneTime:0, notes:"" },
@@ -190,22 +190,22 @@ function CashFlowSankey({ viewMode }) {
   }));
 
   const { takeHome } = useBudget();
-  const totalIncome = takeHome;
-  const totalSpend  = categories.reduce((s, c) => s + c.value, 0);
-  const surplus     = totalIncome - totalSpend;
-  const allDest = categories;
+  const totalIncome = Math.max(0, takeHome || 0);
+  const allDest = categories.filter(c => c.value > 0);
+  const totalSpend  = allDest.reduce((s, c) => s + c.value, 0);
 
   // ── Canvas ─────────────────────────────────────────────────────────────────
   const W = 1000, H = 680;
   const ff = "'DM Sans',system-ui,sans-serif";
-  const pctStr = v => ((v / totalIncome) * 100).toFixed(1) + "%";
+  const pctStr = v => totalIncome > 0 ? `${((v / totalIncome) * 100).toFixed(1)}%` : "n/a";
   const NUM = allDest.length;
   const totalVal = allDest.reduce((s, d) => s + d.value, 0);
+  const safeTotalVal = Math.max(totalVal, 1);
 
   // ── SOURCE: one solid bar, sliced purely by proportion (no gaps, no minimum) 
   const SRC_X = 16, SRC_W = 14;
   const SRC_Y = 30, SRC_H = H - 60;
-  const srcScale = SRC_H / totalVal;
+  const srcScale = SRC_H / safeTotalVal;
   // Cumulative source slice tops
   let srcCur = SRC_Y;
   const srcSlices = allDest.map(d => {
@@ -218,10 +218,14 @@ function CashFlowSankey({ viewMode }) {
   // ── DEST: sqrt-scaled heights — much better visual differentiation ───────────
   // Pure proportional makes tiny cats invisible; pure minimum makes all look equal.
   // sqrt(value) compresses the range: Medical(426)→20.6 vs Snacks(48)→6.9 = 3× diff
-  const DST_X = 570, DST_W = 14;
+  const DST_W = 14;
+  const LABEL_W = 240;
+  const RIGHT_PAD = 18;
+  const DST_X = W - LABEL_W - RIGHT_PAD - DST_W;
+  const LABEL_X = DST_X + DST_W + 14;
   const DST_GAP = 5, DST_MIN = 12;
   const sqrtVals = allDest.map(d => Math.sqrt(d.value));
-  const sqrtTotal = sqrtVals.reduce((s, v) => s + v, 0);
+  const sqrtTotal = Math.max(1, sqrtVals.reduce((s, v) => s + v, 0));
   const dTotalPad = DST_GAP * (NUM - 1);
   const dAvailH = SRC_H - dTotalPad;
   const destNodes = (() => {
@@ -293,7 +297,7 @@ function CashFlowSankey({ viewMode }) {
         <rect x={SRC_X} y={SRC_Y} width={SRC_W} height={SRC_H} rx={6} fill={ACCENT}/>
         <text x={SRC_X+SRC_W+10} y={SRC_Y+20} fontFamily={ff} fill="#94a3b8" fontSize={11} fontWeight={700}>Paychecks</text>
         <text x={SRC_X+SRC_W+10} y={SRC_Y+38} fontFamily={ff} fill={ACCENT} fontSize={18} fontWeight={900}>{fmt(totalIncome)}</text>
-        <text x={SRC_X+SRC_W+10} y={SRC_Y+54} fontFamily={ff} fill={MUTED} fontSize={10}>100%</text>
+        <text x={SRC_X+SRC_W+10} y={SRC_Y+54} fontFamily={ff} fill={MUTED} fontSize={10}>{totalIncome > 0 ? "100%" : "0%"}</text>
 
         {/* Dest nodes + labels */}
         {destNodes.map((d, i) => {
@@ -306,18 +310,18 @@ function CashFlowSankey({ viewMode }) {
               onMouseLeave={() => setHovered(null)}
               style={{ cursor:"pointer" }}>
               {Math.abs(ly - mid) > 4 && (
-                <line x1={DST_X+DST_W+3} y1={mid} x2={DST_X+DST_W+10} y2={ly}
+                <line x1={DST_X+DST_W+3} y1={mid} x2={LABEL_X-4} y2={ly}
                   stroke={d.color} strokeWidth={1} strokeOpacity={0.4}/>
               )}
               <rect x={DST_X} y={d.y} width={DST_W} height={d.h} rx={3}
                 fill={d.color} opacity={isH ? 1 : 0.85}
                 style={{ transition:"opacity .15s" }}/>
-              <text x={DST_X+DST_W+14} y={ly-5}
+              <text x={LABEL_X} y={ly-5}
                 fontFamily={ff} fontSize={12} fontWeight={isH?700:500}
                 fill={isH ? d.color : TEXT}>
                 {d.icon} {d.name}
               </text>
-              <text x={DST_X+DST_W+14} y={ly+10}
+              <text x={LABEL_X} y={ly+10}
                 fontFamily={ff} fontSize={10} fill={isH ? d.color : MUTED}>
                 {fmt(d.value)} ({pctStr(d.value)})
               </text>
@@ -416,6 +420,8 @@ function Summary({wide, isMobile}) {
                 const displayVal = view==="norm" ? r.norm : (r.checking+r.cc);
                 const over = r.kc && displayVal > r.kc;
                 const pct  = takeHome > 0 ? (displayVal / takeHome) * 100 : 0;
+                const targetPct = r.kc > 0 ? Math.min((displayVal / r.kc) * 100, 100) : 0;
+                const targetDelta = r.kc ? (r.kc - displayVal) : null;
                 const isOpen = expandedCat === r.cat;
                 const txns = txnsFor(r.cat);
                 return (
@@ -440,6 +446,16 @@ function Summary({wide, isMobile}) {
                         </div>
                       </div>
                       <PBar pct={pct*2.5} color={r.color} h={4}/>
+                      {r.kc && (
+                        <div style={{marginTop:8}}>
+                          <div style={{height:3,borderRadius:99,background:r.color+"22",overflow:"hidden"}}>
+                            <div style={{height:"100%",width:`${targetPct}%`,background:r.color,borderRadius:99,transition:"width .4s"}}/>
+                          </div>
+                          <div style={{fontSize:11,color:r.color,marginTop:4,fontWeight:700,fontVariantNumeric:"tabular-nums"}}>
+                            {targetDelta >= 0 ? `${fmt(targetDelta)} to target` : `${fmt(Math.abs(targetDelta))} over target`} ({Math.round((displayVal / r.kc) * 100)}%)
+                          </div>
+                        </div>
+                      )}
                       <div style={{display:"flex",gap:6,marginTop:7,flexWrap:"wrap"}}>
                         {r.checking>0 && <span style={{fontSize:11,color:"#3b82f6",background:"#3b82f611",padding:"2px 8px",borderRadius:99,fontVariantNumeric:"tabular-nums"}}>🏦 {fmt(r.checking)}</span>}
                         {r.cc>0       && <span style={{fontSize:11,color:"#6366f1",background:"#6366f111",padding:"2px 8px",borderRadius:99,fontVariantNumeric:"tabular-nums"}}>💳 {fmt(r.cc)}</span>}
@@ -515,6 +531,8 @@ function Summary({wide, isMobile}) {
               {sortedSummaryRows.map((r,i)=>{
                 const displayVal = view==="norm" ? r.norm : (r.checking+r.cc);
                 const over = r.kc && displayVal > r.kc;
+                const targetDelta = r.kc ? (r.kc - displayVal) : null;
+                const targetPct = r.kc > 0 ? Math.min((displayVal / r.kc) * 100, 100) : 0;
                 const isOpen = expandedCat === r.cat;
                 const txns = txnsFor(r.cat);
                 return (
@@ -527,13 +545,23 @@ function Summary({wide, isMobile}) {
                         alignItems:"center",cursor:"pointer",transition:"background .15s"}}>
                       <span style={{fontSize:16}}>{r.icon}</span>
                       <div style={{display:"flex",alignItems:"center",gap:8}}>
-                        <div style={{fontSize:13,fontWeight:isOpen?700:500,color:isOpen?r.color:TEXT}}>{r.cat}</div>
+                        <div style={{display:"flex",flexDirection:"column",gap:4,flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:isOpen?700:500,color:isOpen?r.color:TEXT}}>{r.cat}</div>
+                          {r.kc && <PBar pct={targetPct} color={r.color} h={2}/>}
+                        </div>
                         {r.oneTime>0&&view==="actual"&&<Tag color="#f59e0b">−{fmt(r.oneTime)} one-time</Tag>}
                         <span style={{fontSize:10,color:isOpen?r.color:MUTED,marginLeft:"auto",transition:"transform .2s",display:"inline-block",transform:isOpen?"rotate(180deg)":"none"}}>▾</span>
                       </div>
                       <div style={{textAlign:"right",fontSize:12,color:r.checking>0?"#94a3b8":DIM,fontVariantNumeric:"tabular-nums"}}>{r.checking>0?fmt(r.checking):"—"}</div>
                       <div style={{textAlign:"right",fontSize:12,color:r.cc>0?"#94a3b8":DIM,fontVariantNumeric:"tabular-nums"}}>{r.cc>0?fmt(r.cc):"—"}</div>
-                      <div style={{textAlign:"right",fontSize:14,fontWeight:700,color:isOpen?r.color:TEXT,fontVariantNumeric:"tabular-nums"}}>{fmt(displayVal)}</div>
+                      <div style={{textAlign:"right",fontSize:14,fontWeight:700,color:isOpen?r.color:TEXT,fontVariantNumeric:"tabular-nums"}}>
+                        {displayVal === 0 ? "$0" : fmt(displayVal)}
+                        {r.kc && (
+                          <div style={{fontSize:10,color:r.color,fontWeight:700,marginTop:2}}>
+                            {targetDelta >= 0 ? `${fmt(targetDelta)} to target` : `${fmt(Math.abs(targetDelta))} over`}
+                          </div>
+                        )}
+                      </div>
                       <div style={{textAlign:"right"}}>{r.kc?<Tag color={over?"#ef4444":"#22c55e"}>{fmt(r.kc)}</Tag>:<span style={{color:DIM,fontSize:12}}>—</span>}</div>
                     </div>
                     {/* Expanded transaction list — split Checking / CC */}
@@ -664,7 +692,7 @@ let _itemId = 100;
 const mkItemId = () => "item" + (_itemId++);
 
 const PLAN_PRESETS = [
-  { label:"2nd Tithe / Feast", emoji:"⛪" },
+  { label:"2nd Tithe / Feast", emoji:"🙏" },
   { label:"Monthly Surplus",   emoji:"📅" },
   { label:"Custom Amount",     emoji:"✏️" },
 ];
@@ -694,7 +722,7 @@ function Scenarios({ wide, isMobile }) {
       ]
     }
   ]);
-  const [activeTab, setActiveTab] = useState("planner"); // "planner" | "waterfall"
+  const [activeTab, setActiveTab] = useState("impact"); // "impact" | "planner"
 
   // ── Plan CRUD ──────────────────────────────────────────────────────────────
   const addPlan = () => setPlans(prev => [...prev, {
@@ -736,45 +764,70 @@ function Scenarios({ wide, isMobile }) {
     setNewStepLabel(""); setNewStepAmt("");
   };
   const removeCustomStep = (id) => saveCustomSteps(customSteps.filter(s => s.id !== id));
-  // ── Waterfall data — auto over-budget categories + payoffs + custom ─────────
+  // ── Waterfall data — reorderable over-budget categories + payoffs + custom ─────────
   const { summaryRows: wfRows, waterfallDisabled } = useBudget();
+  const baseImpactSteps = useMemo(() => {
+    const overspend = wfRows.flatMap(r => {
+      if (!r.kc) return [];
+      const save = (r.checking + r.cc) - r.kc;
+      if (save <= 0) return [];
+      return [{ id: "cat_" + r.cat, label: r.cat + " overspend", payment: save, color: r.color, type: "overspend" }];
+    });
+    const payoffSteps = payoffs.map(p => ({ id: "payoff_" + p.id, label: p.name, payment: p.payment, color: p.color, type: "payoff" }));
+    const manualSteps = customSteps.map(s => ({ id: s.id, label: s.label, payment: s.payment, color: s.color, type: "custom" }));
+    return [...overspend, ...payoffSteps, ...manualSteps];
+  }, [wfRows, payoffs, customSteps]);
+
+  const [impactOrder, setImpactOrder] = useState(() => ls.getJSON("budget_impactOrder", []));
+  useEffect(() => {
+    const ids = baseImpactSteps.map(s => s.id);
+    setImpactOrder(prev => {
+      const keep = prev.filter(id => ids.includes(id));
+      const add = ids.filter(id => !keep.includes(id));
+      return [...keep, ...add];
+    });
+  }, [baseImpactSteps]);
+  useEffect(() => { ls.setJSON("budget_impactOrder", impactOrder); }, [impactOrder]);
+
+  const moveImpactStep = (id, dir) => {
+    setImpactOrder(prev => {
+      const idx = prev.indexOf(id);
+      if (idx < 0) return prev;
+      const nextIdx = idx + dir;
+      if (nextIdx < 0 || nextIdx >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[nextIdx]] = [next[nextIdx], next[idx]];
+      return next;
+    });
+  };
+
+  const stepById = useMemo(() => {
+    const map = {};
+    baseImpactSteps.forEach(s => { map[s.id] = s; });
+    return map;
+  }, [baseImpactSteps]);
+
+  const orderedImpactSteps = useMemo(
+    () => impactOrder.map(id => stepById[id]).filter(Boolean).filter(s => !waterfallDisabled.includes(s.id)),
+    [impactOrder, stepById, waterfallDisabled]
+  );
+
   const waterfallSteps = useMemo(() => {
     let remaining = Math.abs(normSurplus);
-    const steps = [
-      { id:"gap", label:"Current gap", spend: remaining, surplus: normSurplus, color:"#ef4444" },
-    ];
-    // Auto: any category that has a KC target and is over it
-    wfRows.forEach(r => {
-      if (!r.kc) return;
-      const actual = r.checking + r.cc;
-      const save = actual - r.kc;
-      if (save <= 0) return;
-      const stepId = "cat_" + r.cat;
-      if (waterfallDisabled.includes(stepId)) return;
-      remaining = remaining - save;
-      steps.push({ id: stepId, label: r.cat + " →$" + r.kc.toLocaleString(), spend: remaining, surplus: -(remaining), color: r.color, payment: save, auto: true, cat: r.cat });
-    });
-    // Payoffs
-    payoffs.forEach(p => {
-      if (waterfallDisabled.includes("payoff_" + p.id)) return;
-      remaining = remaining - p.payment;
-      steps.push({ id:"payoff_"+p.id, label:p.name, spend: remaining, surplus: -(remaining), color:p.color, payment:p.payment });
-    });
-    // Custom steps
-    customSteps.forEach(s => {
-      if (waterfallDisabled.includes(s.id)) return;
-      remaining = remaining - s.payment;
-      steps.push({ id:s.id, label:s.label, spend: remaining, surplus: -(remaining), color:s.color, payment:s.payment });
+    const steps = [{ id:"gap", label:"Current gap", spend: remaining, surplus: normSurplus, color:"#ef4444", payment: 0, type: "gap" }];
+    orderedImpactSteps.forEach(s => {
+      remaining -= s.payment;
+      steps.push({ ...s, spend: remaining, surplus: -remaining });
     });
     return steps;
-  }, [wfRows, payoffs, customSteps, waterfallDisabled, normSurplus, groceryGoal, checkTxns, ccTxns, selectedMonth]);
+  }, [orderedImpactSteps, normSurplus]);
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
 
       {/* Tab switcher */}
       <div style={{display:"flex",gap:8}}>
-        {[["planner","🗓 Trip / Event Planner"],["waterfall","📊 Payoff Waterfall"]].map(([t,l])=>(
+        {[["impact","📊 Budget Impact Waterfall"],["planner","🗓 Trip / Event Planner"]].map(([t,l])=>(
           <button key={t} onClick={()=>setActiveTab(t)} style={{
             padding:"9px 18px",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",
             background:activeTab===t?ACCENT+"22":BG,color:activeTab===t?ACCENT:MUTED,
@@ -902,26 +955,29 @@ function Scenarios({ wide, isMobile }) {
       )}
 
       {/* ── WATERFALL TAB ── */}
-      {activeTab==="waterfall" && (
+      {activeTab==="impact" && (
         <>
           <Card glow="#818cf8">
-            <Label>Payoff Waterfall · Updates live from Payoffs tab</Label>
-            <div style={{fontSize:13,color:MUTED,marginTop:4}}>Each bar shows monthly surplus after that debt disappears. Edit balances and payments in the Payoffs tab — this chart updates automatically.</div>
+            <Label>Budget Impact Waterfall · Overages + payoffs + custom reductions</Label>
+            <div style={{fontSize:13,color:MUTED,marginTop:4}}>Reorder steps to model what to tackle first. The chart and totals update automatically.</div>
           </Card>
 
           <Card>
             <Label>Monthly Surplus Step-Down</Label>
             <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={waterfallSteps} barSize={wide?32:20} margin={{left:-14}}>
+              <BarChart data={waterfallSteps} barSize={wide?32:20} margin={{left:0,right:12,top:20,bottom:0}}>
                 <XAxis dataKey="label" tick={{fontSize:wide?11:9,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>v.slice(0,12)} interval={0}/>
-                <YAxis tick={{fontSize:11,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(Math.abs(v)/1000).toFixed(0)}k`} width={38}/>
+                <YAxis tick={{fontSize:11,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(Math.abs(v)/1000).toFixed(0)}k`} width={52}/>
                 <ReferenceLine y={0} stroke={ACCENT} strokeDasharray="4 3" label={{value:"Break-even",fill:ACCENT,fontSize:10,position:"right"}}/>
-                <Tooltip content={<Tip/>}/>
+                <Tooltip content={<Tip/>} cursor={{fill:"transparent"}}/>
                 <Bar dataKey="surplus" name="Monthly Surplus" radius={[5,5,0,0]}>
-                  {waterfallSteps.map((d,i)=>{
-                    const col = d.surplus>=0?"#22c55e":d.surplus>-500?"#f59e0b":"#ef4444";
-                    return <Cell key={i} fill={d.color||col} opacity={0.85}/>;
-                  })}
+                  <LabelList
+                    dataKey="surplus"
+                    position="top"
+                    formatter={v => `${v >= 0 ? "+" : "-"}${fmt(Math.abs(v))}`}
+                    style={{fontSize:10,fontWeight:700,fill:MUTED}}
+                  />
+                  {waterfallSteps.map((d,i)=><Cell key={i} fill={d.color} opacity={0.9}/>)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -930,15 +986,14 @@ function Scenarios({ wide, isMobile }) {
           <div style={{display:"grid",gridTemplateColumns:wide?"1fr 1fr":"1fr",gap:12}}>
             {waterfallSteps.slice(1).map((step,i)=>{
               const sur = step.surplus;
-              const col = sur>=0?"#22c55e":sur>-500?"#f59e0b":"#ef4444";
-              const payoff = payoffs[i];
+              const col = step.color;
               return (
                 <Card key={i} style={{border:`1px solid ${col}33`}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <div style={{width:8,height:36,borderRadius:4,background:payoff?.color||col}}/>
+                      <div style={{width:8,height:36,borderRadius:4,background:col}}/>
                       <div>
-                        <div style={{fontSize:14,fontWeight:700,color:TEXT}}>{step.label} paid off</div>
+                        <div style={{fontSize:14,fontWeight:700,color:TEXT}}>{step.label}</div>
                         <div style={{fontSize:12,color:MUTED}}>+{fmt(step.payment)}/mo freed</div>
                       </div>
                     </div>
@@ -989,6 +1044,28 @@ function Scenarios({ wide, isMobile }) {
                 ))}
               </div>
             )}
+          </Card>
+
+          <Card>
+            <Label>Step Order</Label>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {orderedImpactSteps.length === 0 && (
+                <div style={{fontSize:12,color:MUTED}}>No active steps. Re-enable items in Settings or add a custom step.</div>
+              )}
+              {orderedImpactSteps.map((s, i) => (
+                <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",border:`1px solid ${s.color}33`,background:BG,borderRadius:10}}>
+                  <div style={{width:10,height:22,borderRadius:4,background:s.color,flexShrink:0}}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,color:TEXT,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.label}</div>
+                    <div style={{fontSize:11,color:MUTED}}>+{fmt(s.payment)}/mo</div>
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={() => moveImpactStep(s.id, -1)} disabled={i===0} style={{padding:"4px 8px",borderRadius:8,fontSize:11,fontWeight:700,background:BG,color:i===0?DIM:MUTED,border:`1px solid ${BORDER}`,cursor:i===0?"default":"pointer"}}>Up</button>
+                    <button onClick={() => moveImpactStep(s.id, 1)} disabled={i===orderedImpactSteps.length-1} style={{padding:"4px 8px",borderRadius:8,fontSize:11,fontWeight:700,background:BG,color:i===orderedImpactSteps.length-1?DIM:MUTED,border:`1px solid ${BORDER}`,cursor:i===orderedImpactSteps.length-1?"default":"pointer"}}>Down</button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </Card>
         </>
       )}
@@ -1128,7 +1205,7 @@ const FieldInput = ({label, val, onChange, type="text", placeholder=""}) => (
 );
 
 function Payoffs({wide}) {
-  const { payoffs, setPayoffs, normSurplus, groceryGoal, checkTxns, ccTxns, selectedMonth, takeHome } = useBudget();
+  const { payoffs, setPayoffs, normSurplus, checkTxns, ccTxns, selectedMonth } = useBudget();
   const [enabled, setEnabled] = useState(() => {
     try {
       const s = ls.get("budget_payoffEnabled");
@@ -1139,6 +1216,7 @@ function Payoffs({wide}) {
   useEffect(() => { ls.setJSON("budget_payoffEnabled", [...enabled]); }, [enabled]);
   const [editId,    setEditId]   = useState(null);
   const [editDraft, setEditDraft] = useState({});
+  const [auditOpenId, setAuditOpenId] = useState(null);
   const [adding,  setAdding]    = useState(false);
   const [newDebt, setNewDebt]   = useState({ name:"", payment:"", balance:"", manualBalance:"", icon:"💳", color:"#22c55e", keywords:"" });
 
@@ -1189,8 +1267,11 @@ function Payoffs({wide}) {
       const d = new Date(); d.setMonth(d.getMonth() + mo);
       return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()] + " " + d.getFullYear();
     };
-    const matchedTxns = kws.length ? allTxns.filter(t => kws.some(kw => (t.desc || "").toLowerCase().includes(kw))) : [];
-    const paid = matchedTxns.reduce((s, t) => s + (t.amount > 0 ? t.amount : 0), 0);
+    const matchedTxns = kws.length ? allTxns.filter(t => {
+      const hay = `${t.desc || ""} ${t.note || ""}`.toLowerCase();
+      return kws.some(kw => hay.includes(kw));
+    }) : [];
+    const paid = matchedTxns.reduce((s, t) => s + Math.abs(parseFloat(t.amount) || 0), 0);
     // Priority: manual override > keyword-computed > origBalance
     const currentBalance = manual > 0 ? manual : (kws.length && orig > 0 ? Math.max(0, orig - paid) : orig);
     const auto = !manual && kws.length > 0 && orig > 0;
@@ -1200,10 +1281,9 @@ function Payoffs({wide}) {
   };
 
   const totalRelief  = payoffs.filter(p=>enabled.has(p.id)).reduce((s,p)=>s+p.payment,0);
-  const actualGroceries = allTxns.filter(t => t.month === selectedMonth && t.cat === "Groceries").reduce((s,t) => s+t.amount, 0);
-  const grocerySave  = Math.max(0, actualGroceries - groceryGoal);
-  const projSurplus  = normSurplus + grocerySave + totalRelief;
+  const projSurplus  = normSurplus + totalRelief;
   const projColor    = projSurplus>=0?"#22c55e":projSurplus>-500?"#f59e0b":"#ef4444";
+  const gapBase      = Math.max(1, Math.abs(normSurplus));
   const barData      = payoffs.map(p=>({name:p.name, payment:p.payment, active:enabled.has(p.id), color:p.color}));
 
   // FieldInput is at module level
@@ -1215,13 +1295,13 @@ function Payoffs({wide}) {
         <Label>Projected Surplus · Toggle debts to model payoff scenarios</Label>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:12,marginBottom:16}}>
           <div>
-            <div style={{fontSize:12,color:MUTED,marginBottom:4}}>With grocery goal + selected payoffs</div>
+            <div style={{fontSize:12,color:MUTED,marginBottom:4}}>With selected payoffs</div>
             <div style={{fontSize:wide?42:34,fontWeight:900,color:projColor,letterSpacing:"-1.5px",fontVariantNumeric:"tabular-nums",lineHeight:1,transition:"color .3s"}}>
               {projSurplus>=0?"+":"−"}{fmt(Math.abs(projSurplus))}/mo
             </div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:6,textAlign:"right"}}>
-            {[["Gap today","−"+fmt(Math.abs(normSurplus)),"#ef4444"],["Grocery fix","+"+fmt(grocerySave),"#22c55e"],["Payoff relief","+"+fmt(totalRelief),"#22c55e"]].map(([k,v,c])=>(
+            {[["Gap today","-"+fmt(Math.abs(normSurplus)),"#ef4444"],["Payoff relief","+"+fmt(totalRelief),"#22c55e"]].map(([k,v,c])=>(
               <div key={k} style={{display:"flex",alignItems:"center",gap:10}}>
                 <span style={{fontSize:13,color:MUTED}}>{k}</span>
                 <span style={{fontSize:16,fontWeight:800,color:c,fontVariantNumeric:"tabular-nums",transition:"all .3s"}}>{v}</span>
@@ -1233,10 +1313,10 @@ function Payoffs({wide}) {
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
             <span style={{fontSize:11,color:MUTED}}>Gap closed</span>
             <span style={{fontSize:11,color:projColor,fontWeight:700}}>
-              {projSurplus>=0?"100% — surplus reached!":Math.round(((normSurplus+grocerySave+totalRelief)/Math.abs(normSurplus))*100)+"% of way to break-even"}
+              {projSurplus>=0?"100% — surplus reached!":Math.round((totalRelief/gapBase)*100)+"% of way to break-even"}
             </span>
           </div>
-          <PBar pct={Math.min(100,Math.round(((grocerySave+totalRelief)/Math.abs(normSurplus))*100))} color={projColor} h={8}/>
+          <PBar pct={Math.min(100,Math.round((totalRelief/gapBase)*100))} color={projColor} h={8}/>
         </div>
       </Card>
 
@@ -1244,11 +1324,12 @@ function Payoffs({wide}) {
       <Card>
         <Label>Monthly Relief by Debt</Label>
         <ResponsiveContainer width="100%" height={120}>
-          <BarChart data={barData} barSize={wide?36:24} margin={{left:-14}}>
+          <BarChart data={barData} barSize={wide?36:24} margin={{left:0,right:10,top:20,bottom:0}}>
             <XAxis dataKey="name" tick={{fontSize:10,fill:MUTED}} axisLine={false} tickLine={false}/>
-            <YAxis tick={{fontSize:10,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v}`} width={38}/>
-            <Tooltip content={<Tip/>}/>
+            <YAxis tick={{fontSize:10,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v}`} width={52}/>
+            <Tooltip content={<Tip/>} cursor={{fill:"transparent"}}/>
             <Bar dataKey="payment" name="Monthly relief" radius={[5,5,0,0]}>
+              <LabelList dataKey="payment" position="top" formatter={v => v > 0 ? fmt(v) : ""} style={{fontSize:10,fontWeight:700,fill:MUTED}} />
               {barData.map((d,i)=><Cell key={i} fill={d.color} opacity={d.active?1:0.2}/>)}
             </Bar>
           </BarChart>
@@ -1260,12 +1341,13 @@ function Payoffs({wide}) {
         {payoffs.map(p => {
           const isOn   = enabled.has(p.id);
           const isEdit = editId === p.id;
+          const isAudit = auditOpenId === p.id;
           const stats  = getPayoffStats(isEdit ? editDraft : p);
           return (
             <Card key={p.id} style={{opacity:isOn?1:0.6,transition:"opacity .2s",border:`1px solid ${isEdit?p.color+"66":BORDER}`}}>
               {/* Header row */}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:isEdit?14:12}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:isEdit?14:12,gap:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,flex:1,minWidth:0}}>
                   <div style={{width:36,height:36,borderRadius:10,background:p.color+"22",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,position:"relative"}}>
                     {isEdit
                       ? <EmojiInput value={editDraft.icon || "💳"} onChange={v=>setEditDraft(d=>({...d,icon:v}))}
@@ -1275,17 +1357,13 @@ function Payoffs({wide}) {
                   </div>
                   {isEdit
                     ? <input value={editDraft.name || ""} onChange={e=>setEditDraft(d=>({...d,name:e.target.value}))}
-                        style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"5px 10px",color:TEXT,fontSize:16,fontWeight:700,width:140,outline:"none"}}/>
-                    : <div>
-                        <div style={{fontSize:15,fontWeight:700,color:TEXT}}>{p.name}</div>
-                        <div style={{fontSize:12,color:MUTED}}>
-                          Balance: {fmt(stats.currentBalance)}
-                          {stats.auto && <span style={{marginLeft:5,fontSize:10,background:p.color+"22",color:p.color,borderRadius:4,padding:"1px 5px",fontWeight:700}}>auto</span>}
-                        </div>
+                        style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"5px 10px",color:TEXT,fontSize:16,fontWeight:700,width:140,outline:"none",minWidth:0}}/>
+                    : <div style={{minWidth:0}}>
+                        <div style={{fontSize:15,fontWeight:700,color:TEXT,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</div>
                       </div>
                   }
                 </div>
-                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0,flexWrap:"nowrap"}}>
                   {!isEdit && <Tag color={p.color}>{stats.payoffDate}</Tag>}
                   <button onClick={() => {
                     if (isEdit) {
@@ -1297,15 +1375,26 @@ function Payoffs({wide}) {
                   }} style={{
                     padding:"3px 9px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",
                     background:isEdit?p.color+"22":BORDER,color:isEdit?p.color:MUTED,
-                    border:`1px solid ${isEdit?p.color:BORDER}`,transition:"all .15s",
+                    border:`1px solid ${isEdit?p.color:BORDER}`,transition:"all .15s",whiteSpace:"nowrap",
                   }}>{isEdit?"Done":"Edit"}</button>
                   <button onClick={()=>toggle(p.id)} style={{
                     padding:"3px 9px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",
                     background:isOn?p.color+"22":BORDER,color:isOn?p.color:MUTED,
-                    border:`1px solid ${isOn?p.color:BORDER}`,transition:"all .15s",
+                    border:`1px solid ${isOn?p.color:BORDER}`,transition:"all .15s",whiteSpace:"nowrap",
                   }}>{isOn?"✓":"Off"}</button>
+                  <button onClick={()=>setAuditOpenId(isAudit ? null : p.id)} style={{
+                    padding:"3px 9px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",
+                    background:isAudit?p.color+"22":BORDER,color:isAudit?p.color:MUTED,
+                    border:`1px solid ${isAudit?p.color:BORDER}`,transition:"all .15s",whiteSpace:"nowrap",
+                  }}>Audit ({stats.matchedTxns.length})</button>
                 </div>
               </div>
+              {!isEdit && (
+                <div style={{display:"flex",alignItems:"center",gap:6,marginTop:-4,marginBottom:10,paddingLeft:46}}>
+                  <span style={{fontSize:12,color:MUTED}}>Balance: {fmt(stats.currentBalance)}</span>
+                  {stats.auto && <span style={{fontSize:10,background:p.color+"22",color:p.color,borderRadius:4,padding:"1px 5px",fontWeight:700}}>auto</span>}
+                </div>
+              )}
 
               {/* Edit mode fields */}
               {isEdit ? (
@@ -1357,21 +1446,7 @@ function Payoffs({wide}) {
                             <div style={{fontSize:14,fontWeight:700,color:col}}>{s.pct}%</div>
                           </div>
                         </div>
-                        {s.matchedTxns.length > 0 && (
-                          <div style={{marginTop:10,borderTop:`1px solid ${BORDER}`,paddingTop:8}}>
-                            <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:6}}>
-                              Matched Transactions ({s.matchedTxns.length})
-                            </div>
-                            <div style={{display:"flex",flexDirection:"column",gap:3,maxHeight:140,overflowY:"auto"}}>
-                              {s.matchedTxns.map((t,i) => (
-                                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:11,gap:8}}>
-                                  <span style={{color:MUTED,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{t.month} · {t.desc}</span>
-                                  <span style={{color:col,fontWeight:700,flexShrink:0}}>{fmt(t.amount)}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                        
                       </div>
                     );
                   })()}
@@ -1405,6 +1480,34 @@ function Payoffs({wide}) {
                 <span style={{fontSize:11,color:DIM}}>Progress toward payoff</span>
                 <span style={{fontSize:11,color:DIM}}>{stats.pct}%</span>
               </div>
+              {isAudit && (
+                <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${BORDER}`}}>
+                  {(p.keywords || "").trim().length === 0 ? (
+                    <div style={{fontSize:11,color:MUTED}}>No keywords set. Add keywords in Edit mode to enable transaction matching.</div>
+                  ) : (
+                    <>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                        <span style={{fontSize:11,color:MUTED,fontWeight:700}}>Matched transactions ({stats.matchedTxns.length})</span>
+                        <span style={{fontSize:11,color:p.color,fontWeight:700}}>Counted: {fmt(stats.paid)}</span>
+                      </div>
+                      {stats.matchedTxns.length === 0 ? (
+                        <div style={{fontSize:11,color:MUTED}}>No matching transactions found for current keywords.</div>
+                      ) : (
+                        <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:150,overflowY:"auto"}}>
+                          {stats.matchedTxns.map((t,i)=>(
+                            <div key={i} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:11}}>
+                              <span style={{color:MUTED,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>
+                                {t.month} · {t.date} · {t.desc}
+                              </span>
+                              <span style={{color:p.color,fontWeight:700,flexShrink:0}}>{fmt(Math.abs(t.amount || 0))}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </Card>
           );
         })}
@@ -1515,6 +1618,7 @@ function Categories({wide, isMobile}) {
   useEffect(() => { setSpotlight(null); setExpandedVendor(null); }, [cat]);
 
   const total = vendors.reduce((s,x) => s + x.total, 0);
+  const selectedTotal = spotlight ? (vendors.find(v => v.name === spotlight)?.total || 0) : total;
   const goal = isGroceries ? groceryGoal : (catRow ? catRow.kc : null);
   const gap = goal ? total - goal : null;
   const gapColor = gap == null ? color : gap > 0 ? "#ef4444" : "#22c55e";
@@ -1600,13 +1704,19 @@ function Categories({wide, isMobile}) {
           {/* Bar chart */}
           <Card>
             <Label>{isGroceries?"Spending by Store":"Spending by Vendor"} · Click to spotlight</Label>
-            <ResponsiveContainer width="100%" height={160}>
-              <BarChart data={vendors.map(s=>({name:s.name,amount:s.total}))} barSize={wide?36:24} margin={{left:-14}}
+            <ResponsiveContainer width="100%" height={190}>
+              <BarChart data={vendors.map(s=>({name:s.name,amount:s.total}))} barSize={wide?36:24} margin={{left:0,right:10,top:20,bottom:0}}
                 onClick={d=>{ if(d?.activeTooltipIndex!=null) setSpotlight(vendors[d.activeTooltipIndex]?.name||null); }}>
                 <XAxis dataKey="name" tick={{fontSize:9,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>v.slice(0,7)} interval={0}/>
-                <YAxis tick={{fontSize:10,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v}`} width={38}/>
-                <Tooltip content={<Tip/>}/>
+                <YAxis tick={{fontSize:10,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v}`} width={52}/>
+                <Tooltip content={<Tip/>} cursor={{fill:"transparent"}}/>
                 <Bar dataKey="amount" name="Spend" radius={[5,5,0,0]} cursor="pointer">
+                  <LabelList
+                    dataKey="amount"
+                    position="top"
+                    formatter={v => v > 0 ? fmt(v) : ""}
+                    style={{fontSize:10,fontWeight:700,fill:MUTED}}
+                  />
                   {vendors.map((s,i)=>(
                     <Cell key={i} fill={s.color} opacity={spotlight===null||spotlight===s.name?1:0.2}/>
                   ))}
@@ -1615,7 +1725,9 @@ function Categories({wide, isMobile}) {
             </ResponsiveContainer>
             {spotlight && (
               <div style={{marginTop:8,display:"flex",alignItems:"center",gap:8}}>
-                <span style={{fontSize:12,color:MUTED}}>Spotlighting: <strong style={{color:TEXT}}>{spotlight}</strong></span>
+                <span style={{fontSize:12,color:MUTED}}>
+                  Spotlighting: <strong style={{color:TEXT}}>{spotlight}</strong> · {fmt(selectedTotal)} of {fmt(total)}
+                </span>
                 <button onClick={()=>setSpotlight(null)} style={{padding:"2px 8px",borderRadius:6,background:BORDER,border:`1px solid ${BORDER}`,color:MUTED,fontSize:11,cursor:"pointer"}}>Clear ✕</button>
               </div>
             )}
@@ -1625,7 +1737,7 @@ function Categories({wide, isMobile}) {
           <Card>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
               <Label>{isGroceries?"By Store":"By Vendor"}</Label>
-              {spotlight && <Tag color={color}>Spotlighting {spotlight}</Tag>}
+              {spotlight && <Tag color={color}>Spotlighting {spotlight} · {fmt(selectedTotal)}</Tag>}
             </div>
             <div style={{display:"grid",gridTemplateColumns:wide?"1fr 1fr":"1fr",gap:wide?"0 32px":0}}>
               {vendors.map(s=>{
@@ -1900,8 +2012,10 @@ IMPORTANT: The amounts MUST sum to exactly ${txn.amount.toFixed(2)}. Group small
 
 // ── TRANSACTION TABLE ─────────────────────────────────────────────────────────
 function TxnTable({ src, isMobile }) {
-  const { checkTxns, ccTxns, updateTxnCat, deleteTxn, replaceTxn, selectedMonth, availableMonths, addTxns, allCats, catColorsAll } = useBudget();
+  const { checkTxns, ccTxns, updateTxnCat, updateTxn, deleteTxn, replaceTxn, selectedMonth, availableMonths, addTxns, allCats, catColorsAll } = useBudget();
   const [splitTxn, setSplitTxn] = useState(null); // txn being split
+  const [editId, setEditId] = useState(null);
+  const [editDraft, setEditDraft] = useState({ date:"", desc:"", amount:"", note:"" });
   const allTxns = src === "checking" ? checkTxns : ccTxns;
 
   const [monthFilter, setMonthFilter] = useState(selectedMonth);
@@ -1938,6 +2052,21 @@ function TxnTable({ src, isMobile }) {
     addTxns(src, [{ date, desc: newDesc.trim(), amount, cat: newCat, month: newMon, note: "" }]);
     setNewDesc(""); setNewAmt(""); setNewDate("");
     setShowAdd(false);
+  };
+
+  const beginEdit = (t) => {
+    setEditId(t.id);
+    setEditDraft({ date: t.date || "", desc: t.desc || "", amount: String(t.amount ?? ""), note: t.note || "" });
+  };
+  const cancelEdit = () => {
+    setEditId(null);
+    setEditDraft({ date:"", desc:"", amount:"", note:"" });
+  };
+  const saveEdit = () => {
+    const amt = parseFloat(editDraft.amount);
+    if (!editId || !editDraft.desc.trim() || Number.isNaN(amt)) return;
+    updateTxn(src, editId, { date: editDraft.date.trim(), desc: editDraft.desc.trim(), amount: amt, note: editDraft.note || "" });
+    cancelEdit();
   };
 
   return (
@@ -2054,6 +2183,14 @@ function TxnTable({ src, isMobile }) {
                     <span style={{fontSize:12,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{t.date}</span>
                     <div style={{display:"flex",gap:6,alignItems:"center"}}>
                       <CatSelect t={t} src={src} updateTxnCat={updateTxnCat}/>
+                      <button onClick={() => editId===t.id ? saveEdit() : beginEdit(t)} title="Edit"
+                        style={{background:"#22c55e15",border:"none",borderRadius:4,color:"#22c55e",fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>
+                        {editId===t.id ? "Save" : "Edit"}
+                      </button>
+                      {editId===t.id && (
+                        <button onClick={cancelEdit} title="Cancel"
+                          style={{background:"#33415522",border:"none",borderRadius:4,color:MUTED,fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>Cancel</button>
+                      )}
                       {!isIncome && !isTransfer && (
                         <button onClick={() => setSplitTxn(t)} title="Split"
                           style={{background:"#06b6d415",border:"none",borderRadius:4,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>✂</button>
@@ -2066,12 +2203,29 @@ function TxnTable({ src, isMobile }) {
                   {/* Bottom row: description + amount */}
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:14,fontWeight:500,color:isIncome?"#22c55e":TEXT,lineHeight:1.3}}>
-                        {t.desc}
-                        {isOneTime&&<span style={{marginLeft:6}}><Tag color="#f59e0b">one-time</Tag></span>}
-                      </div>
-                      {t.note&&!t.note.includes("ONE-TIME")&&(
-                        <div style={{fontSize:11,color:DIM,marginTop:2}}>{t.note}</div>
+                      {editId===t.id ? (
+                        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                          <div style={{display:"grid",gridTemplateColumns:"80px 1fr 90px",gap:6}}>
+                            <input value={editDraft.date} onChange={e=>setEditDraft(d=>({...d,date:e.target.value}))} placeholder="MM/DD"
+                              style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
+                            <input value={editDraft.desc} onChange={e=>setEditDraft(d=>({...d,desc:e.target.value}))} placeholder="Description"
+                              style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
+                            <input type="number" step="0.01" value={editDraft.amount} onChange={e=>setEditDraft(d=>({...d,amount:e.target.value}))}
+                              style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
+                          </div>
+                          <input value={editDraft.note} onChange={e=>setEditDraft(d=>({...d,note:e.target.value}))} placeholder="Note (optional)"
+                            style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{fontSize:14,fontWeight:500,color:isIncome?"#22c55e":TEXT,lineHeight:1.3}}>
+                            {t.desc}
+                            {isOneTime&&<span style={{marginLeft:6}}><Tag color="#f59e0b">one-time</Tag></span>}
+                          </div>
+                          {t.note&&!t.note.includes("ONE-TIME")&&(
+                            <div style={{fontSize:11,color:DIM,marginTop:2}}>{t.note}</div>
+                          )}
+                        </>
                       )}
                     </div>
                     <div style={{fontSize:16,fontWeight:800,color:amtColor,fontVariantNumeric:"tabular-nums",flexShrink:0}}>
@@ -2089,7 +2243,7 @@ function TxnTable({ src, isMobile }) {
         ) : (
           /* ── DESKTOP: 4-col table ── */
           <>
-            <div style={{display:"grid",gridTemplateColumns:"60px 1fr 90px 120px 54px 36px",padding:"10px 16px",background:BG,borderBottom:`1px solid ${BORDER}`}}>
+            <div style={{display:"grid",gridTemplateColumns:"60px 1fr 96px 150px 118px 56px",padding:"10px 16px",background:BG,borderBottom:`1px solid ${BORDER}`}}>
               {["Date","Description","Amount","Category","",""].map(h=>(
                 <div key={h} style={{fontSize:11,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:".5px"}}>{h}</div>
               ))}
@@ -2098,33 +2252,62 @@ function TxnTable({ src, isMobile }) {
               const isIncome=t.cat==="Income", isTransfer=t.cat==="Transfer", isReturn=t.amount<0;
               const isOneTime=t.note?.includes("ONE-TIME");
               const catColor=catColorsAll[t.cat]||MUTED;
+              const isEditing = editId === t.id;
               return (
-                <div key={i} style={{display:"grid",gridTemplateColumns:"60px 1fr 90px 120px 54px 36px",padding:"10px 16px",borderBottom:`1px solid ${BORDER}`,background:isIncome?"#22c55e07":isTransfer?"#33415507":i%2===0?SURFACE:BG,opacity:isTransfer?.5:1}}>
-                  <div style={{fontSize:12,color:MUTED,alignSelf:"center"}}>{t.date}</div>
+                <div key={i} style={{display:"grid",gridTemplateColumns:"60px 1fr 96px 150px 118px 56px",padding:"10px 16px",borderBottom:`1px solid ${BORDER}`,background:isIncome?"#22c55e07":isTransfer?"#33415507":i%2===0?SURFACE:BG,opacity:isTransfer?.5:1}}>
+                  <div style={{fontSize:12,color:MUTED,alignSelf:"center"}}>
+                    {isEditing
+                      ? <input value={editDraft.date} onChange={e=>setEditDraft(d=>({...d,date:e.target.value}))} placeholder="MM/DD"
+                          style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
+                      : t.date}
+                  </div>
                   <div style={{alignSelf:"center",paddingRight:12}}>
-                    <div style={{fontSize:13,color:isIncome?"#22c55e":TEXT,fontWeight:isIncome?700:400,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                      {t.desc}{isOneTime&&<Tag color="#f59e0b">one-time</Tag>}
-                    </div>
-                    {t.note&&!t.note.includes("ONE-TIME")&&<div style={{fontSize:11,color:DIM,marginTop:2}}>{t.note}</div>}
+                    {isEditing ? (
+                      <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                        <input value={editDraft.desc} onChange={e=>setEditDraft(d=>({...d,desc:e.target.value}))}
+                          style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
+                        <input value={editDraft.note} onChange={e=>setEditDraft(d=>({...d,note:e.target.value}))} placeholder="Note (optional)"
+                          style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:11,outline:"none"}}/>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{fontSize:13,color:isIncome?"#22c55e":TEXT,fontWeight:isIncome?700:400,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                          {t.desc}{isOneTime&&<Tag color="#f59e0b">one-time</Tag>}
+                        </div>
+                        {t.note&&!t.note.includes("ONE-TIME")&&<div style={{fontSize:11,color:DIM,marginTop:2}}>{t.note}</div>}
+                      </>
+                    )}
                   </div>
                   <div style={{fontSize:14,fontWeight:700,alignSelf:"center",fontVariantNumeric:"tabular-nums",color:isIncome?"#22c55e":isReturn?"#22c55e":isTransfer?MUTED:TEXT}}>
-                    {isIncome||isReturn?"+":""}{fmt(t.amount)}
+                    {isEditing
+                      ? <input type="number" step="0.01" value={editDraft.amount} onChange={e=>setEditDraft(d=>({...d,amount:e.target.value}))}
+                          style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
+                      : <>{isIncome||isReturn?"+":""}{fmt(t.amount)}</>}
                   </div>
                   <div style={{alignSelf:"center"}}><CatSelect t={t} src={src} updateTxnCat={updateTxnCat}/></div>
-                  <div style={{alignSelf:"center"}}>
+                  <div style={{alignSelf:"center",display:"flex",gap:6,justifyContent:"flex-start",whiteSpace:"nowrap"}}>
+                    <button onClick={() => isEditing ? saveEdit() : beginEdit(t)} title="Edit"
+                      style={{background:"#22c55e15",border:"none",borderRadius:4,color:"#22c55e",fontSize:11,cursor:"pointer",padding:"2px 8px",lineHeight:1.5,fontWeight:700}}>
+                      {isEditing ? "Save" : "Edit"}
+                    </button>
                     {!isIncome && !isTransfer && (
                       <button onClick={() => setSplitTxn(t)} title="Split transaction"
-                        style={{background:"#06b6d415",border:"none",borderRadius:4,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"2px 6px",lineHeight:1.5,fontWeight:700}}>✂</button>
+                        style={{background:"#06b6d415",border:"none",borderRadius:4,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"2px 8px",lineHeight:1.5,fontWeight:700}}>Split</button>
                     )}
                   </div>
                   <div style={{alignSelf:"center"}}>
-                    <button onClick={() => deleteTxn(src, t.id)} title="Delete"
-                      style={{background:"#ef444415",border:"none",borderRadius:4,color:"#ef4444",fontSize:13,cursor:"pointer",padding:"2px 6px",lineHeight:1.5}}>✕</button>
+                    {isEditing ? (
+                      <button onClick={cancelEdit} title="Cancel edit"
+                        style={{background:"#33415522",border:"none",borderRadius:4,color:MUTED,fontSize:11,cursor:"pointer",padding:"2px 6px",lineHeight:1.5,fontWeight:700}}>Cancel</button>
+                    ) : (
+                      <button onClick={() => deleteTxn(src, t.id)} title="Delete"
+                        style={{background:"#ef444415",border:"none",borderRadius:4,color:"#ef4444",fontSize:13,cursor:"pointer",padding:"2px 6px",lineHeight:1.5}}>Del</button>
+                    )}
                   </div>
                 </div>
               );
             })}
-            <div style={{display:"grid",gridTemplateColumns:"60px 1fr 90px 120px 54px 36px",padding:"12px 16px",background:"#0f141e",borderTop:`2px solid ${BORDER}`}}>
+            <div style={{display:"grid",gridTemplateColumns:"60px 1fr 96px 150px 118px 56px",padding:"12px 16px",background:"#0f141e",borderTop:`2px solid ${BORDER}`}}>
               <div/>
               <div style={{fontSize:13,fontWeight:700,color:MUTED}}>Total spend (excl. income & transfers)</div>
               <div style={{fontSize:15,fontWeight:900,color:"#f97316",fontVariantNumeric:"tabular-nums"}}>{fmt(visibleTotal)}</div>
@@ -2261,11 +2444,17 @@ const RECS = [
 ];
 
 function Recommendations({ wide, isMobile }) {
+  const { checkTxns, ccTxns, selectedMonth, normSurplus, payoffs, takeHome, groceryGoal, dashName } = useBudget();
   const [expanded, setExpanded] = useState(null);
-  const [recs, setRecs]         = useState(RECS);
+  const [tipsByMonth, setTipsByMonth] = useState(() => ls.getJSON("budget_ai_tips_by_month", {}));
+  const [promptByMonth, setPromptByMonth] = useState(() => ls.getJSON("budget_ai_prompts_by_month", {}));
+  const [recs, setRecs]         = useState(() => {
+    const saved = ls.getJSON("budget_ai_tips_by_month", {});
+    return Array.isArray(saved?.[selectedMonth]) && saved[selectedMonth].length ? saved[selectedMonth] : RECS;
+  });
   const [refreshing, setRefreshing] = useState(false);
   const [refreshErr, setRefreshErr] = useState(null);
-  const { checkTxns, ccTxns, selectedMonth, normSurplus, payoffs, takeHome, groceryGoal, dashName } = useBudget();
+  const [showPrompt, setShowPrompt] = useState(false);
 
   const totalImpact = payoffs.reduce((s, p) => s + p.payment, 0);
 
@@ -2273,6 +2462,12 @@ function Recommendations({ wide, isMobile }) {
   const actualIncome = checkTxns.filter(t => t.month === selectedMonth && t.cat === "Income").reduce((s,t)=>s+t.amount,0) || takeHome;
   const actualSpend  = [...checkTxns,...ccTxns].filter(t => t.month === selectedMonth && t.cat !== "Income" && t.cat !== "Transfer").reduce((s,t)=>s+t.amount,0);
   const actualGap    = actualIncome - actualSpend;
+
+  useEffect(() => {
+    const monthTips = tipsByMonth[selectedMonth];
+    setRecs(Array.isArray(monthTips) && monthTips.length ? monthTips : RECS);
+    setShowPrompt(false);
+  }, [selectedMonth, tipsByMonth]);
 
   const handleRefresh = async () => {
     if (!ANTHROPIC_API_KEY) {
@@ -2344,6 +2539,16 @@ Return ONLY a valid JSON array, no markdown, no explanation.`;
       const parsed = JSON.parse(clean);
       if (Array.isArray(parsed) && parsed.length > 0) {
         setRecs(parsed);
+        setTipsByMonth(prev => {
+          const next = { ...prev, [selectedMonth]: parsed };
+          ls.setJSON("budget_ai_tips_by_month", next);
+          return next;
+        });
+        setPromptByMonth(prev => {
+          const next = { ...prev, [selectedMonth]: prompt };
+          ls.setJSON("budget_ai_prompts_by_month", next);
+          return next;
+        });
       } else {
         throw new Error("Invalid response format");
       }
@@ -2361,16 +2566,32 @@ Return ONLY a valid JSON array, no markdown, no explanation.`;
       <Card glow="#22c55e">
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10,marginBottom:12}}>
           <Label style={{marginBottom:0}}>Your Financial Roadmap · {selectedMonth} 2026</Label>
-          <button onClick={handleRefresh} disabled={refreshing} style={{
-            display:"flex",alignItems:"center",gap:7,padding:"7px 14px",borderRadius:10,fontSize:12,fontWeight:700,cursor:refreshing?"wait":"pointer",
-            background:refreshing?"#334155":"#818cf822",color:refreshing?MUTED:"#818cf8",
-            border:`1px solid ${refreshing?"#334155":"#818cf844"}`,transition:"all .2s",flexShrink:0,
-          }}>
-            <span style={{display:"inline-block",animation:refreshing?"spin 1s linear infinite":"none",fontSize:14}}>✨</span>
-            {refreshing?"Generating tips…":"Refresh tips with AI"}
-          </button>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <button onClick={()=>setShowPrompt(v=>!v)} style={{
+              display:"flex",alignItems:"center",gap:7,padding:"7px 12px",borderRadius:10,fontSize:12,fontWeight:700,cursor:"pointer",
+              background:"#33415522",color:MUTED,border:`1px solid ${BORDER}`,transition:"all .2s",flexShrink:0,
+            }}>
+              {showPrompt?"Hide":"Show"} last AI prompt
+            </button>
+            <button onClick={handleRefresh} disabled={refreshing} style={{
+              display:"flex",alignItems:"center",gap:7,padding:"7px 14px",borderRadius:10,fontSize:12,fontWeight:700,cursor:refreshing?"wait":"pointer",
+              background:refreshing?"#334155":"#818cf822",color:refreshing?MUTED:"#818cf8",
+              border:`1px solid ${refreshing?"#334155":"#818cf844"}`,transition:"all .2s",flexShrink:0,
+            }}>
+              <span style={{display:"inline-block",animation:refreshing?"spin 1s linear infinite":"none",fontSize:14}}>✨</span>
+              {refreshing?"Generating tips…":"Refresh tips with AI"}
+            </button>
+          </div>
         </div>
         {refreshErr && <div style={{fontSize:12,color:"#f59e0b",marginBottom:10,padding:"8px 12px",background:"#f59e0b11",borderRadius:8,border:"1px solid #f59e0b33"}}>{refreshErr}</div>}
+        {showPrompt && (
+          <div style={{marginBottom:10,padding:"10px 12px",background:BG,border:`1px solid ${BORDER}`,borderRadius:10}}>
+            <div style={{fontSize:11,color:MUTED,marginBottom:6}}>Last AI prompt for {selectedMonth}</div>
+            <pre style={{margin:0,whiteSpace:"pre-wrap",wordBreak:"break-word",fontSize:11,color:TEXT,lineHeight:1.45,maxHeight:180,overflowY:"auto"}}>
+              {promptByMonth[selectedMonth] || "No saved AI prompt yet for this month. Click 'Refresh tips with AI' first."}
+            </pre>
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: wide ? "repeat(3,1fr)" : "1fr 1fr", gap: 12, marginBottom: 14 }}>
           {[
             ["#1 Lever",     recs[0]?.title || "Cut groceries to goal", "#f97316"],
@@ -2785,6 +3006,50 @@ function Trends({ wide, isMobile }) {
     : [];
 
   const hasMultiple = availableMonths.length >= 2;
+  const cashflowData = trendData.map(d => {
+    const income = d._income || 0;
+    const spend = d._total || 0;
+    const net = income - spend;
+    const savingsRate = income > 0 ? (net / income) * 100 : 0;
+    return { month: d.month, income, spend, net, savingsRate };
+  });
+  const topTrendCats = useMemo(() => {
+    return [...summaryRows]
+      .map(r => ({ ...r, total: trendData.reduce((s, d) => s + (d[r.cat] || 0), 0) }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 4)
+      .filter(r => r.total > 0);
+  }, [summaryRows, trendData]);
+  const demoTrendData = useMemo(() => {
+    if (hasMultiple) return [];
+    const baseMonth = availableMonths[0] || selectedMonth || "January";
+    const baseIdx = MONTH_ORDER.indexOf(baseMonth);
+    const labels = [0, 1, 2].map(i => {
+      const idx = baseIdx >= 0 ? (baseIdx + i) % MONTH_ORDER.length : i;
+      return i === 0 ? MONTH_ORDER[idx].slice(0, 3) : `${MONTH_ORDER[idx].slice(0, 3)}*`;
+    });
+    const baseRow = trendData[0] || {};
+    return labels.map((m, i) => {
+      const row = { month: m };
+      summaryRows.forEach((r, idx) => {
+        const base = baseRow[r.cat] || 0;
+        const slope = ((idx % 5) - 2) * 0.06;
+        const curve = i === 0 ? 1 : 1 + slope * i;
+        row[r.cat] = Math.max(0, Math.round(base * curve));
+      });
+      row._total = summaryRows.reduce((s, r) => s + (row[r.cat] || 0), 0);
+      row._income = Math.max(0, Math.round((baseRow._income || 0) * (i === 0 ? 1 : 1 + 0.02 * i)));
+      return row;
+    });
+  }, [hasMultiple, availableMonths, selectedMonth, trendData, summaryRows]);
+  const demoTopCats = useMemo(() => {
+    if (hasMultiple) return [];
+    return [...summaryRows]
+      .map(r => ({ ...r, total: demoTrendData.reduce((s, d) => s + (d[r.cat] || 0), 0) }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5)
+      .filter(r => r.total > 0);
+  }, [hasMultiple, summaryRows, demoTrendData]);
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -2825,6 +3090,37 @@ function Trends({ wide, isMobile }) {
                   ))}
                 </Bar>
               </BarChart>
+            </ResponsiveContainer>
+          </Card>
+
+          <Card>
+            <Label>Income vs Spending</Label>
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={cashflowData} margin={{ left: -14 }}>
+                <CartesianGrid stroke={BORDER} strokeDasharray="3 3" />
+                <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
+                <YAxis tick={{fontSize:11,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`} width={40}/>
+                <Tooltip formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
+                <Legend />
+                <Area type="monotone" dataKey="income" name="Income" stroke="#22c55e" fill="#22c55e22" />
+                <Area type="monotone" dataKey="spend" name="Spending" stroke="#ef4444" fill="#ef444422" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </Card>
+
+          <Card>
+            <Label>Top Category Trends</Label>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={trendData} margin={{ left: -14 }}>
+                <CartesianGrid stroke={BORDER} strokeDasharray="3 3" />
+                <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
+                <YAxis tick={{fontSize:11,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`} width={40}/>
+                <Tooltip formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
+                <Legend />
+                {topTrendCats.map(c => (
+                  <Line key={c.cat} type="monotone" dataKey={c.cat} stroke={c.color} strokeWidth={2.5} dot={{r:3}} activeDot={{r:5}} />
+                ))}
+              </LineChart>
             </ResponsiveContainer>
           </Card>
 
@@ -2933,24 +3229,60 @@ function Trends({ wide, isMobile }) {
         </>
       )}
 
-      {/* Always show: single-month summary even with one month */}
+      {/* Single-month: show demo trend cards + selected month summary */}
       {!hasMultiple && (
-        <Card>
-          <Label>January 2026 · Category Summary</Label>
-          <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
-            {summaryRows.map(r=>{
-              const val = [...checkTxns,...ccTxns].filter(t=>t.month==="January"&&t.cat===r.cat&&t.cat!=="Transfer"&&t.cat!=="Income").reduce((s,t)=>s+t.amount,0);
-              if(!val) return null;
-              return (
-                <div key={r.cat} style={{display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{width:8,height:8,borderRadius:2,background:r.color,flexShrink:0}}/>
-                  <span style={{fontSize:13,color:TEXT,flex:1}}>{r.cat}</span>
-                  <span style={{fontSize:13,fontWeight:700,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{fmt(val)}</span>
-                </div>
-              );
-            })}
-          </div>
-        </Card>
+        <>
+          <Card>
+            <Label>Example Trend Preview</Label>
+            <div style={{fontSize:12,color:MUTED,marginBottom:10}}>
+              These sample projections stay local and preview how trend charts will look after a second month is imported.
+            </div>
+            <ResponsiveContainer width="100%" height={180}>
+              <AreaChart data={demoTrendData} margin={{ left: -14 }}>
+                <CartesianGrid stroke={BORDER} strokeDasharray="3 3" />
+                <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
+                <YAxis hide />
+                <Tooltip formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
+                <Legend />
+                <Area type="monotone" dataKey="_income" name="Income (sample)" stroke="#22c55e" fill="#22c55e22" />
+                <Area type="monotone" dataKey="_total" name="Spending (sample)" stroke="#ef4444" fill="#ef444422" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </Card>
+
+          <Card>
+            <Label>Example Category Trends</Label>
+            <ResponsiveContainer width="100%" height={210}>
+              <LineChart data={demoTrendData} margin={{ left: -14 }}>
+                <CartesianGrid stroke={BORDER} strokeDasharray="3 3" />
+                <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
+                <YAxis hide />
+                <Tooltip formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
+                <Legend />
+                {demoTopCats.map(c => (
+                  <Line key={c.cat} type="monotone" dataKey={c.cat} stroke={c.color} strokeWidth={2.5} dot={{r:3}} activeDot={{r:5}} />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </Card>
+
+          <Card>
+            <Label>{selectedMonth} 2026 � Category Summary</Label>
+            <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
+              {summaryRows.map(r=>{
+                const val = [...checkTxns,...ccTxns].filter(t=>t.month===selectedMonth&&t.cat===r.cat&&t.cat!=="Transfer"&&t.cat!=="Income").reduce((s,t)=>s+t.amount,0);
+                if(!val) return null;
+                return (
+                  <div key={r.cat} style={{display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{width:8,height:8,borderRadius:2,background:r.color,flexShrink:0}}/>
+                    <span style={{fontSize:13,color:TEXT,flex:1}}>{r.cat}</span>
+                    <span style={{fontSize:13,fontWeight:700,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{fmt(val)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </>
       )}
     </div>
   );
@@ -3155,7 +3487,7 @@ function Settings({ isMobile }) {
         <Label>🔀 Feature Toggles</Label>
         <div style={{fontSize:12,color:MUTED,marginBottom:14}}>Hide tabs and categories you don't need. Data for hidden categories is still tracked — it just won't appear in the nav or summary.</div>
         {[
-          { key:"tithe", label:"Tithe Tracker", emoji:"⛪", desc:"Giving & Tithe category + Tithe tab", val:showTithe, set:setShowTithe },
+          { key:"tithe", label:"Tithe Tracker", emoji:"🙏", desc:"Giving & Tithe category + Tithe tab", val:showTithe, set:setShowTithe },
           { key:"aba",   label:"ABA Planner",   emoji:"🧩", desc:"ABA Therapy category + ABA tab",   val:showABA,   set:setShowABA   },
         ].map(f => (
           <div key={f.key} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderRadius:10,background:BG,border:`1px solid ${f.val?"#7c6af744":BORDER}`,marginBottom:8,opacity:f.val?1:0.6,transition:"all .15s"}}>
@@ -3314,7 +3646,7 @@ function Settings({ isMobile }) {
 
       {/* Waterfall Visibility */}
       <Card glow="#f97316" style={{marginTop:16}}>
-        <Label>📊 Payoff Waterfall — Visible Steps</Label>
+        <Label>Budget Impact Waterfall - Visible Steps</Label>
         <div style={{fontSize:12,color:MUTED,marginBottom:14}}>
           Each over-budget category and debt automatically appears as a waterfall step. Toggle any off to hide it from the chart.
         </div>
@@ -3534,6 +3866,8 @@ function StatementImporter({ wide, isMobile }) {
   const [editingIdx, setEditingIdx] = useState(null);
   const [aiRanOnCsv, setAiRanOnCsv] = useState(false);
   const [runningAI, setRunningAI] = useState(false);
+  const [localPdfFailed, setLocalPdfFailed] = useState(false);
+  const [parsingMode, setParsingMode] = useState("local");
 
   // ── CSV parser (client-side, no AI needed) ──────────────────────────────────
   const splitCSVLine = (line, delim) => {
@@ -3600,6 +3934,7 @@ function StatementImporter({ wide, isMobile }) {
   const loadFile = file => {
     if (!file) return;
     setParseError(null);
+    setLocalPdfFailed(false);
     if (file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv") {
       setFileName(file.name); setFileType("csv");
       setPdfB64(null);
@@ -3658,6 +3993,7 @@ function StatementImporter({ wide, isMobile }) {
   const parseCSVAndReview = () => {
     if (!csvText) { setParseError("No CSV loaded."); return; }
     setStep("parsing");
+    setParsingMode("local");
     setParseError(null);
     try {
       const dict = buildLocalDict();
@@ -3679,11 +4015,87 @@ function StatementImporter({ wide, isMobile }) {
     }
   };
 
-  const parse = async () => {
-    if (fileType === "csv") { parseCSVAndReview(); return; }
-    if (!ANTHROPIC_API_KEY) { setParseError("Add your Anthropic API key to the top of App.jsx to enable AI import."); return; }
+  const parseLocalPdfData = () => {
+    if (!pdfB64) return [];
+    const raw = atob(pdfB64);
+    const printable = raw.replace(/[^\x20-\x7E\r\n]/g, " ");
+    const textChunks = [];
+    const strMatches = printable.match(/\(([^()]{2,120})\)/g) || [];
+    strMatches.forEach(s => {
+      const cleaned = s.slice(1, -1).replace(/\\\)/g, ")").replace(/\\\(/g, "(").trim();
+      if (cleaned.length >= 2) textChunks.push(cleaned);
+    });
+    textChunks.push(printable);
+    const blob = textChunks.join("\n");
+    const lines = blob.split(/\r?\n/).map(l => l.replace(/\s+/g, " ").trim()).filter(Boolean);
+    const out = [];
+    lines.forEach(line => {
+      const date = line.match(/\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12]\d|3[01])\b/);
+      if (!date) return;
+      const amtMatches = [...line.matchAll(/\(?-?\$?\d{1,3}(?:,\d{3})*(?:\.\d{2})\)?/g)];
+      if (!amtMatches.length) return;
+      const amtRaw = amtMatches[amtMatches.length - 1][0];
+      const amount = parseFloat(amtRaw.replace(/[$,()]/g, "").replace(/^\-/, ""));
+      if (Number.isNaN(amount) || amount === 0) return;
+      let signed = amount;
+      if (/\b(cr|credit|refund)\b/i.test(line)) signed = -amount;
+      const desc = line
+        .replace(date[0], "")
+        .replace(/\(?-?\$?\d{1,3}(?:,\d{3})*(?:\.\d{2})\)?/g, "")
+        .replace(/\b(balance|running|available|total)\b/ig, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 60);
+      if (!desc || desc.length < 3) return;
+      out.push({ date: date[0].replace("-", "/"), desc, amount: signed, cat: "Snacks/Misc", note: "" });
+    });
+    const uniq = [];
+    const seen = new Set();
+    out.forEach(t => {
+      const key = `${t.date}|${t.desc}|${t.amount.toFixed(2)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      uniq.push(t);
+    });
+    return uniq.slice(0, 300);
+  };
+
+  const parseLocalPdfAndReview = () => {
+    setStep("parsing");
+    setParsingMode("local");
+    setParseError(null);
+    try {
+      const dict = buildLocalDict();
+      const raw = parseLocalPdfData();
+      if (raw.length < 3) {
+        setLocalPdfFailed(true);
+        setParseError("Local PDF parse could not confidently detect transactions. You can continue with AI parse.");
+        setStep("upload");
+        return;
+      }
+      const withCats = raw.map(t => {
+        const localCat = findLocalCat(t.desc, dict);
+        return { ...t, cat: localCat || "Snacks/Misc", _localMatch: !!localCat };
+      });
+      const filtered = withCats.filter(t => stmtSrc === "checking" ? true : t.cat !== "Income" && t.cat !== "Transfer");
+      const localCount = filtered.filter(t => t._localMatch).length;
+      setMatchStats({ local: localCount, ai: 0, total: filtered.length, csv: false });
+      setParsed(filtered);
+      setReviewed(filtered.map(t => ({ ...t, _include: true })));
+      setLocalPdfFailed(false);
+      setStep("review");
+    } catch (err) {
+      setLocalPdfFailed(true);
+      setParseError("Local PDF parse failed. You can continue with AI parse.");
+      setStep("upload");
+    }
+  };
+
+  const parseWithAI = async () => {
+    if (!ANTHROPIC_API_KEY) { setParseError("Add your Anthropic API key in Settings to enable AI import."); return; }
     if (!pdfB64) { setParseError("No PDF loaded."); return; }
     setStep("parsing");
+    setParsingMode("ai");
     setParseError(null);
     try {
       // ── Call 1: Extract raw transactions (no categorization) ───────────────
@@ -3774,11 +4186,17 @@ Do NOT include a "cat" field.`;
       setMatchStats({ local: localCount, ai: filtered.length - localCount, total: filtered.length });
       setParsed(filtered);
       setReviewed(filtered.map(t => ({ ...t, _include: true })));
+      setLocalPdfFailed(false);
       setStep("review");
     } catch (err) {
-      setParseError("Parse failed: " + err.message);
+      setParseError("AI parse failed: " + err.message);
       setStep("upload");
     }
+  };
+
+  const parse = async () => {
+    if (fileType === "csv") { parseCSVAndReview(); return; }
+    parseLocalPdfAndReview();
   };
 
   // ── Confirm: push to live state ─────────────────────────────────────────────
@@ -3852,7 +4270,7 @@ Do NOT include a "cat" field.`;
   const reset = () => {
     setStep("upload"); setFileName(null); setFileType(null); setPdfB64(null); setCsvText(null);
     setParsed([]); setReviewed([]); setParseError(null); setEditingIdx(null);
-    setAiRanOnCsv(false); setRunningAI(false);
+    setAiRanOnCsv(false); setRunningAI(false); setLocalPdfFailed(false); setParsingMode("local");
   };
 
   const includedCount = reviewed.filter(t => t._include).length;
@@ -3870,7 +4288,7 @@ Do NOT include a "cat" field.`;
           <div style={{width:44,height:44,borderRadius:14,background:accentImport+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>📥</div>
           <div>
             <Label style={{marginBottom:2}}>Import Statement</Label>
-            <div style={{fontSize:13,color:MUTED}}>Upload a bank or credit card PDF — Claude will parse every transaction and auto-categorize it. Review before confirming.</div>
+            <div style={{fontSize:13,color:MUTED}}>Upload a bank or credit card PDF/CSV. Import attempts local parsing first, then offers AI fallback only if needed.</div>
           </div>
         </div>
       </Card>
@@ -3902,6 +4320,23 @@ Do NOT include a "cat" field.`;
             </div>
           </div>
 
+          <div style={{marginBottom:16,padding:"12px 14px",borderRadius:12,background:BG,border:`1px solid ${BORDER}`}}>
+            <div style={{fontSize:12,fontWeight:800,color:accentImport,marginBottom:8,textTransform:"uppercase",letterSpacing:".5px"}}>How AI is used</div>
+            <div style={{fontSize:12,color:MUTED,display:"grid",gap:5}}>
+              <div>1. CSV parsing is local-only. PDF parsing now tries local extraction first.</div>
+              <div>2. If local PDF parsing fails, you can choose to send the PDF to AI for extraction.</div>
+              <div>3. Category matching runs locally in your browser first using your past transactions.</div>
+              <div>4. Only unmatched merchant descriptions are sent to AI for category suggestions.</div>
+              <div>5. You review/edit every row before anything is added to your dashboard.</div>
+            </div>
+            <div style={{height:1,background:BORDER,margin:"10px 0"}}/>
+            <div style={{fontSize:11,color:DIM,display:"grid",gap:4}}>
+              <div>Data sent on AI PDF parse (optional): PDF contents, statement type, selected month.</div>
+              <div>Data sent on AI categorization: unmatched merchant text and allowed category names.</div>
+              <div>CSV import stays local unless you click "Run AI Categorization".</div>
+            </div>
+          </div>
+
           {/* Drop zone */}
           <div
             onDragOver={e=>{e.preventDefault();setDragOver(true);}}
@@ -3922,7 +4357,7 @@ Do NOT include a "cat" field.`;
                   <div style={{fontSize:12,color:MUTED}}>{fileType==="csv"?"CSV ready — no AI needed":"Ready to parse · click to change"} · click to change</div></>
               : <><div style={{fontSize:15,fontWeight:600,color:TEXT,marginBottom:6}}>Drop your bank statement here</div>
                   <div style={{fontSize:12,color:MUTED}}>or click to browse · PDF or CSV</div>
-                  <div style={{fontSize:11,color:DIM,marginTop:8}}>PDF: AI-powered extraction · CSV: instant client-side parse (no AI needed)</div></>
+                  <div style={{fontSize:11,color:DIM,marginTop:8}}>PDF/CSV: local parse first, AI optional fallback</div></>
             }
           </div>
 
@@ -3944,10 +4379,21 @@ Do NOT include a "cat" field.`;
             {csvText
               ? `📊 Import ${month} CSV (no AI needed)`
               : pdfB64
-                ? `✨ Parse ${month} ${stmtSrc === "checking" ? "Checking" : "Credit Card"} Statement`
+                ? `Local Parse ${month} ${stmtSrc === "checking" ? "Checking" : "Credit Card"} Statement`
                 : "Upload a PDF or CSV first"
             }
           </button>
+          {fileType === "pdf" && localPdfFailed && (
+            <button
+              onClick={parseWithAI}
+              style={{
+                marginTop:10,width:"100%",padding:"11px",borderRadius:10,fontSize:13,fontWeight:800,
+                background:"#8b5cf622",color:"#8b5cf6",cursor:"pointer",
+                border:"1px solid #8b5cf655",transition:"all .2s",
+              }}>
+              AI Fallback: Send PDF for parsing
+            </button>
+          )}
         </Card>
       )}
 
@@ -3957,9 +4403,9 @@ Do NOT include a "cat" field.`;
           <div style={{textAlign:"center",padding:"40px 0"}}>
             <div style={{fontSize:48,marginBottom:20,animation:"spin 2s linear infinite",display:"inline-block"}}>⚙️</div>
             <div style={{fontSize:18,fontWeight:700,color:TEXT,marginBottom:8}}>Parsing your statement…</div>
-            <div style={{fontSize:13,color:MUTED,marginBottom:24}}>Claude is reading every transaction and categorizing it.</div>
+            <div style={{fontSize:13,color:MUTED,marginBottom:24}}>{parsingMode === "ai" ? "AI parsing in progress." : "Running local parser in your browser."}</div>
             <div style={{display:"flex",justifyContent:"center",gap:6}}>
-              {["Reading PDF","Extracting transactions","Auto-categorizing","Building review"].map((s,i)=>(
+              {(parsingMode === "ai" ? ["Uploading PDF","AI extraction","Auto-categorizing","Building review"] : ["Reading file","Extracting lines","Local categorization","Building review"]).map((s,i)=>(
                 <div key={i} style={{fontSize:11,color:accentImport,background:accentImport+"15",padding:"4px 10px",borderRadius:99,border:`1px solid ${accentImport}33`}}>{s}</div>
               ))}
             </div>
@@ -4135,10 +4581,10 @@ Do NOT include a "cat" field.`;
 const NAV = [
   { id:"summary",   label:"Summary",    emoji:"📋" },
   { id:"recs",      label:"Tips",       emoji:"💡" },
-  { id:"tithe",     label:"Tithe",      emoji:"⛪" },
+  { id:"tithe",     label:"Tithe",      emoji:"🙏" },
+  { id:"payoffs",   label:"Payoffs",    emoji:"💳" },
   { id:"scenarios", label:"Scenarios",  emoji:"📈" },
   { id:"aba",       label:"ABA",        emoji:"🧩" },
-  { id:"payoffs",   label:"Payoffs",    emoji:"💳" },
   { id:"categories", label:"Categories", emoji:"📂" },
   { id:"trends",    label:"Trends",     emoji:"📊" },
   { id:"import",    label:"Import",     emoji:"📥" },
@@ -4146,6 +4592,32 @@ const NAV = [
   { id:"cc",        label:"Credit Card",emoji:"💰" },
   { id:"settings",  label:"Settings",   emoji:"⚙️" },
 ];
+const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
+const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const MONTH_ALIAS = {
+  jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
+  jul: "July", aug: "August", sep: "September", sept: "September", oct: "October", nov: "November", dec: "December",
+};
+function normalizeMonthName(m) {
+  const raw = (m || "").toString().trim();
+  if (!raw) return "";
+  const full = APP_MONTHS.find(x => x.toLowerCase() === raw.toLowerCase());
+  if (full) return full;
+  return MONTH_ALIAS[raw.toLowerCase()] || raw;
+}
+function monthFromDateString(dateStr) {
+  const s = (dateStr || "").toString().trim();
+  if (!s) return "";
+  const m = s.match(/^(\d{1,2})[\/-]/);
+  if (!m) return "";
+  const idx = Number(m[1]) - 1;
+  return idx >= 0 && idx < 12 ? APP_MONTHS[idx] : "";
+}
+function deriveTxnMonth(t) {
+  const fromDate = monthFromDateString(t?.date);
+  if (fromDate) return fromDate;
+  return normalizeMonthName(t?.month) || "January";
+}
 
 // ── APP ───────────────────────────────────────────────────────────────────────
 export default function BudgetDashboardClean() {
@@ -4157,10 +4629,10 @@ export default function BudgetDashboardClean() {
 
   // ── Live transaction state — persisted to localStorage ────────────────────
   const [checkTxns, setCheckTxns] = useState(() => {
-    return ls.getJSON("budget_checkTxns", []);
+    return ls.getJSON("budget_checkTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t) }));
   });
   const [ccTxns, setCCTxns] = useState(() => {
-    return ls.getJSON("budget_ccTxns", []);
+    return ls.getJSON("budget_ccTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t) }));
   });
 
   const [selectedMonth, setSelectedMonth] = useState("January");
@@ -4194,11 +4666,14 @@ export default function BudgetDashboardClean() {
 
   // All months that have transaction data
   const availableMonths = useMemo(() => {
-    const all = [...checkTxns, ...ccTxns].map(t => t.month).filter(Boolean);
+    const all = [...checkTxns, ...ccTxns].map(t => deriveTxnMonth(t)).filter(Boolean);
     const unique = [...new Set(all)];
-    const order = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-    return order.filter(m => unique.includes(m));
+    const months = APP_MONTHS.filter(m => unique.includes(m));
+    return months.length ? months : ["January"];
   }, [checkTxns, ccTxns]);
+  useEffect(() => {
+    if (!availableMonths.includes(selectedMonth)) setSelectedMonth(availableMonths[0]);
+  }, [availableMonths, selectedMonth]);
 
   const [payoffs, setPayoffs] = useState(() => {
     return ls.getJSON("budget_payoffs", PAYOFFS_INIT);
@@ -4240,6 +4715,19 @@ export default function BudgetDashboardClean() {
   const updateTxnCat = useCallback((src, id, newCat) => {
     if (src === "checking") setCheckTxns(prev => prev.map(t => t.id === id ? { ...t, cat: newCat } : t));
     else                    setCCTxns(prev => prev.map(t => t.id === id ? { ...t, cat: newCat } : t));
+  }, []);
+
+  const updateTxn = useCallback((src, id, patch) => {
+    const cleanPatch = {
+      ...patch,
+      desc: (patch.desc || "").trim(),
+      date: (patch.date || "").trim(),
+      amount: Number(patch.amount),
+      note: patch.note ?? "",
+    };
+    if (!cleanPatch.desc || !cleanPatch.date || Number.isNaN(cleanPatch.amount)) return;
+    if (src === "checking") setCheckTxns(prev => prev.map(t => t.id === id ? { ...t, ...cleanPatch, month: deriveTxnMonth({ ...t, ...cleanPatch }) } : t));
+    else                    setCCTxns(prev => prev.map(t => t.id === id ? { ...t, ...cleanPatch, month: deriveTxnMonth({ ...t, ...cleanPatch }) } : t));
   }, []);
 
   const deleteTxn = useCallback((src, id) => {
@@ -4284,12 +4772,12 @@ export default function BudgetDashboardClean() {
     if (src === "checking") {
       setCheckTxns(prev => {
         const nextIdx = prev.length;
-        return [...prev, ...newTxns.map((t, i) => ({ ...t, id: `c${nextIdx + i}` }))];
+        return [...prev, ...newTxns.map((t, i) => ({ ...t, month: deriveTxnMonth(t), id: `c${nextIdx + i}` }))];
       });
     } else {
       setCCTxns(prev => {
         const nextIdx = prev.length;
-        return [...prev, ...newTxns.map((t, i) => ({ ...t, id: `cc${nextIdx + i}` }))];
+        return [...prev, ...newTxns.map((t, i) => ({ ...t, month: deriveTxnMonth(t), id: `cc${nextIdx + i}` }))];
       });
     }
   }, []);
@@ -4311,7 +4799,10 @@ export default function BudgetDashboardClean() {
           .reduce((s, t) => s + t.amount, 0);
         const oneTimeAmt = oneTimes.filter(o => o.cat === base.cat).reduce((s, o) => s + o.amount, 0);
         const norm = checking + cc - oneTimeAmt;
-        const kc = budgetKc[base.cat] !== undefined ? budgetKc[base.cat] : base.kc;
+        const defaultKc = base.cat === "Giving & Tithe"
+          ? (takeHome > 0 ? Math.round(takeHome * 0.10) : base.kc)
+          : base.kc;
+        const kc = budgetKc[base.cat] !== undefined ? budgetKc[base.cat] : defaultKc;
         return { ...base, checking, cc, norm, kc };
       });
     const customRows = customCats.map(c => {
@@ -4327,7 +4818,7 @@ export default function BudgetDashboardClean() {
       return { cat: c.name, icon: c.icon, color: c.color, checking, cc, norm, kc, oneTime: oneTimeAmt, notes: "" };
     });
     return [...baseRows, ...customRows];
-  }, [checkTxns, ccTxns, selectedMonth, oneTimes, budgetKc, showTithe, showABA, customCats]);
+  }, [checkTxns, ccTxns, selectedMonth, oneTimes, budgetKc, showTithe, showABA, customCats, takeHome]);
 
   const janActual   = summaryRows.reduce((s, r) => s + r.checking + r.cc, 0);
   const normTotal   = summaryRows.reduce((s, r) => s + r.norm, 0);
@@ -4335,7 +4826,7 @@ export default function BudgetDashboardClean() {
 
   const budget = {
     summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus,
-    updateTxnCat, deleteTxn, clearTxns, addTxns, replaceTxn,
+    updateTxnCat, updateTxn, deleteTxn, clearTxns, addTxns, replaceTxn,
     selectedMonth, setSelectedMonth, availableMonths,
     payoffs, setPayoffs,
     waterfallDisabled, setWaterfallDisabled,
@@ -4431,7 +4922,15 @@ export default function BudgetDashboardClean() {
               ))}
             </div>
           </div>
-          <div style={{padding:"16px 14px 120px",flex:1}}>{pages[page]}</div>
+          <div style={{padding:"16px 14px 120px",flex:1}}>
+            {pages[page]}
+            <div style={{marginTop:18,textAlign:"center"}}>
+              <a href={REPO_URL} target="_blank" rel="noreferrer" style={{fontSize:11,color:DIM,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
+                <span aria-hidden="true">🐙</span>
+                <span>Source code on GitHub</span>
+              </a>
+            </div>
+          </div>
           <div style={{position:"fixed",bottom:0,left:0,right:0,background:SURFACE+"f8",backdropFilter:"blur(24px)",borderTop:`1px solid ${BORDER}`,zIndex:100,paddingBottom:"max(env(safe-area-inset-bottom,0px),8px)"}}>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${mobileRow1.length},1fr)`, borderBottom: `1px solid ${BORDER}` }}>
             {mobileRow1.map(n => { const a = page===n.id; return (
@@ -4494,6 +4993,12 @@ export default function BudgetDashboardClean() {
                   <span style={{fontSize:12,fontWeight:800,color:c,fontVariantNumeric:"tabular-nums"}}>{v}</span>
                 </div>
               ))}
+              <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${BORDER}`}}>
+                <a href={REPO_URL} target="_blank" rel="noreferrer" style={{fontSize:11,color:DIM,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
+                  <span aria-hidden="true">🐙</span>
+                  <span>Source code on GitHub</span>
+                </a>
+              </div>
             </div>
           </div>
           <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",overflowY:"auto"}}>
@@ -4512,3 +5017,6 @@ export default function BudgetDashboardClean() {
     </BudgetCtx.Provider>
   );
 }
+
+
+
