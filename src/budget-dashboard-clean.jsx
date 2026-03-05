@@ -2756,15 +2756,57 @@ function MealPlanningPage({ wide }) {
     const parseAiJson = (rawText) => {
       const raw = String(rawText || "").trim();
       if (!raw) throw new Error("AI returned an empty response.");
-      const unfenced = raw.replace(/```json|```/gi, "").trim();
+      const normalized = raw
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/\u00A0/g, " ");
+      const unfenced = normalized.replace(/```json|```/gi, "").trim();
       const attempts = [];
-      attempts.push(unfenced);
+      const maybeAdd = (s) => {
+        const v = String(s || "").trim();
+        if (v && !attempts.includes(v)) attempts.push(v);
+      };
+      maybeAdd(unfenced);
       const firstBrace = unfenced.indexOf("{");
       const lastBrace = unfenced.lastIndexOf("}");
-      if (firstBrace >= 0 && lastBrace > firstBrace) attempts.push(unfenced.slice(firstBrace, lastBrace + 1));
+      if (firstBrace >= 0 && lastBrace > firstBrace) maybeAdd(unfenced.slice(firstBrace, lastBrace + 1));
+      const fenceMatch = normalized.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (fenceMatch?.[1]) maybeAdd(fenceMatch[1]);
+      const extractBalanced = (text, openCh, closeCh) => {
+        const out = [];
+        let depth = 0;
+        let start = -1;
+        let inStr = false;
+        let esc = false;
+        for (let i = 0; i < text.length; i++) {
+          const ch = text[i];
+          if (inStr) {
+            if (esc) esc = false;
+            else if (ch === "\\") esc = true;
+            else if (ch === "\"") inStr = false;
+            continue;
+          }
+          if (ch === "\"") { inStr = true; continue; }
+          if (ch === openCh) {
+            if (depth === 0) start = i;
+            depth += 1;
+          } else if (ch === closeCh && depth > 0) {
+            depth -= 1;
+            if (depth === 0 && start >= 0) out.push(text.slice(start, i + 1));
+          }
+        }
+        return out;
+      };
+      extractBalanced(unfenced, "{", "}").forEach(maybeAdd);
+      extractBalanced(unfenced, "[", "]").forEach(maybeAdd);
       for (const candidate of attempts) {
-        try { return JSON.parse(candidate); } catch {}
-        try { return JSON.parse(candidate.replace(/,\s*([}\]])/g, "$1")); } catch {}
+        const cleaned = candidate
+          .replace(/^\uFEFF/, "")
+          .replace(/\/\/.*$/gm, "")
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .trim();
+        try { return JSON.parse(cleaned); } catch {}
+        try { return JSON.parse(cleaned.replace(/,\s*([}\]])/g, "$1")); } catch {}
       }
       throw new Error("AI response was not valid JSON.");
     };
@@ -2779,7 +2821,8 @@ function MealPlanningPage({ wide }) {
         const apiMsg = data?.error?.message || data?.error?.type || `HTTP ${res.status}`;
         throw new Error(`AI request failed: ${apiMsg}`);
       }
-      return (data.content || []).map(b => b?.text || "").join("\n").trim();
+      const raw = (data.content || []).map(b => b?.text || "").join("\n").trim();
+      return { raw, stopReason: data?.stop_reason || "" };
     };
     try {
       const prompt = `Create a practical grocery meal plan JSON for a US household.
@@ -2820,16 +2863,36 @@ Return ONLY valid JSON with this shape:
   "waste_reduction_tips": ["..."]
 }`;
 
-      const raw = await callAnthropic(prompt, 3000);
+      const { raw, stopReason } = await callAnthropic(prompt, 4200);
       let parsedJson;
       let responseToSave = raw;
       try {
+        if (stopReason === "max_tokens") {
+          throw new Error("AI response was truncated (max tokens).");
+        }
         parsedJson = parseAiJson(raw);
       } catch {
-        const repairPrompt = `Convert this text into strict valid JSON only. Do not add markdown, comments, or extra text.\n\n${raw}`;
-        const repaired = await callAnthropic(repairPrompt, 2200);
-        parsedJson = parseAiJson(repaired);
-        responseToSave = repaired;
+        const repairPrompt = `You are a strict JSON formatter.
+Convert the following text into strict valid JSON only.
+Do not add markdown, comments, code fences, or extra text.
+If any field is unknown, use empty strings/arrays instead of omitting keys.
+
+TEXT TO REPAIR:
+${raw}`;
+        const repairedPass1 = await callAnthropic(repairPrompt, 2600);
+        try {
+          parsedJson = parseAiJson(repairedPass1.raw);
+          responseToSave = repairedPass1.raw;
+        } catch {
+          const repairPrompt2 = `Return ONLY minified strict JSON object that matches the expected meal-plan schema keys.
+No prose. No markdown.
+
+RAW INPUT:
+${raw}`;
+          const repairedPass2 = await callAnthropic(repairPrompt2, 2600);
+          parsedJson = parseAiJson(repairedPass2.raw);
+          responseToSave = repairedPass2.raw;
+        }
       }
       const parsed = normalizePlan(parsedJson);
       setAiPlanByMonth(prev => ({ ...prev, [selectedMonth]: parsed }));
@@ -2847,8 +2910,10 @@ Return ONLY valid JSON with this shape:
       }));
     } catch (e) {
       const msg = String(e?.message || "");
-      if (/not valid json|empty response/i.test(msg)) {
-        setPlanErr("AI returned an invalid format. Try again with shorter goals/stores, then refresh tips and retry.");
+      if (/max tokens|truncated/i.test(msg)) {
+        setPlanErr("AI response was truncated. Reduce goals text or stores and try again.");
+      } else if (/not valid json|empty response/i.test(msg)) {
+        setPlanErr("AI returned an invalid format after repair attempts. Try again.");
       } else if (msg) {
         setPlanErr(msg);
       } else {
@@ -5404,7 +5469,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.7";
+const APP_VERSION = "0.1.8";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",

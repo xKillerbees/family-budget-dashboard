@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.8] - 2026-03-05
+
+### Fixed
+- Meal-plan parsing now handles additional malformed-output cases (smart quotes, fenced blocks, embedded JSON fragments, trailing commas, and comment artifacts).
+- Meal-plan generation now detects truncated AI responses (`max_tokens`) and reports a specific truncation error.
+- Meal-plan fallback now uses a two-pass JSON-repair strategy before surfacing format errors.
+
 ## [0.1.7] - 2026-03-05
 
 ### Fixed
