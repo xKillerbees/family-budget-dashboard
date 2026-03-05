@@ -11,6 +11,9 @@ All notable changes to this project are documented in this file.
 ### Fixed
 - Meal-plan debug logging now preserves raw model output and repair-pass outputs in saved responses.
 - Latest saved raw AI response is now always visible in a copyable debug text area.
+- Settings footer version badge now correctly displays `v0.1.9` to match the package/build version.
+- Meal-plan normalization now stamps `generated_at` at save time, avoiding stale model-provided dates in UI tags/history.
+- Meal-plan normalization now auto-corrects clearly inconsistent monthly estimates from AI output using the weekly estimate baseline (`weekly * 4.33`).
 
 ## [0.1.8] - 2026-03-05
 

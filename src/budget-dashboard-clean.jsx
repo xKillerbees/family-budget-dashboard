@@ -2709,6 +2709,10 @@ function MealPlanningPage({ wide }) {
     return [...perStore, `https://www.google.com/search?q=${q}+price`];
   };
   const normalizePlan = (parsed) => {
+    const asPosNum = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
     const meals = Array.isArray(parsed?.meals) ? parsed.meals.map((m) => ({
       ...m,
       recipe_links: {
@@ -2728,9 +2732,15 @@ function MealPlanningPage({ wide }) {
         price_proof_links: links.length ? links : fallbackProofLinks(it?.item, Object.keys(sc)),
       };
     }) : [];
+    const weeklyFromModel = asPosNum(parsed?.estimated_weekly_total);
+    const monthlyFromModel = asPosNum(parsed?.estimated_monthly_total);
+    const monthlyFromWeekly = weeklyFromModel ? Number((weeklyFromModel * 4.33).toFixed(2)) : 0;
+    const monthlyMismatch = weeklyFromModel && monthlyFromModel && Math.abs(monthlyFromModel - monthlyFromWeekly) > Math.max(25, monthlyFromWeekly * 0.25);
     return {
       ...parsed,
-      generated_at: parsed?.generated_at || new Date().toISOString(),
+      generated_at: new Date().toISOString(),
+      estimated_weekly_total: weeklyFromModel,
+      estimated_monthly_total: monthlyMismatch ? monthlyFromWeekly : (monthlyFromModel || monthlyFromWeekly),
       meals,
       grocery_items,
     };
@@ -5496,7 +5506,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.8";
+const APP_VERSION = "0.1.9";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
