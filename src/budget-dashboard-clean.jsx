@@ -4593,6 +4593,7 @@ const NAV = [
   { id:"settings",  label:"Settings",   emoji:"⚙️" },
 ];
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
+const APP_VERSION = "0.1.0";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
@@ -4998,6 +4999,7 @@ export default function BudgetDashboardClean() {
                   <span aria-hidden="true">🐙</span>
                   <span>Source code on GitHub</span>
                 </a>
+                <div style={{fontSize:10,color:DIM,marginTop:6}}>v{APP_VERSION}</div>
               </div>
             </div>
           </div>
