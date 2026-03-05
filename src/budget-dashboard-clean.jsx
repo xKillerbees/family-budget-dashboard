@@ -2773,6 +2773,44 @@ function MealPlanningPage({ wide }) {
         .replace(/[\u201C\u201D]/g, '"')
         .replace(/\u00A0/g, " ");
       const unfenced = normalized.replace(/```json|```/gi, "").trim();
+      const stripJsonComments = (text) => {
+        let out = "";
+        let inStr = false;
+        let esc = false;
+        let i = 0;
+        while (i < text.length) {
+          const ch = text[i];
+          const next = text[i + 1];
+          if (inStr) {
+            out += ch;
+            if (esc) esc = false;
+            else if (ch === "\\") esc = true;
+            else if (ch === "\"") inStr = false;
+            i += 1;
+            continue;
+          }
+          if (ch === "\"") {
+            inStr = true;
+            out += ch;
+            i += 1;
+            continue;
+          }
+          if (ch === "/" && next === "/") {
+            i += 2;
+            while (i < text.length && text[i] !== "\n") i += 1;
+            continue;
+          }
+          if (ch === "/" && next === "*") {
+            i += 2;
+            while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i += 1;
+            i = Math.min(text.length, i + 2);
+            continue;
+          }
+          out += ch;
+          i += 1;
+        }
+        return out.trim();
+      };
       const attempts = [];
       const maybeAdd = (s) => {
         const v = String(s || "").trim();
@@ -2811,14 +2849,32 @@ function MealPlanningPage({ wide }) {
       };
       extractBalanced(unfenced, "{", "}").forEach(maybeAdd);
       extractBalanced(unfenced, "[", "]").forEach(maybeAdd);
+      const unwrapPlanLikeObject = (value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+        if (Array.isArray(value.meals) || Array.isArray(value.grocery_items)) return value;
+        const nested = value.raw_model_response || value.response || value.data || value.result;
+        if (nested == null) return null;
+        if (nested && typeof nested === "object" && !Array.isArray(nested)) return nested;
+        if (typeof nested === "string") {
+          try {
+            const parsedNested = JSON.parse(nested.trim());
+            if (parsedNested && typeof parsedNested === "object" && !Array.isArray(parsedNested)) return parsedNested;
+          } catch {}
+        }
+        return null;
+      };
       for (const candidate of attempts) {
-        const cleaned = candidate
-          .replace(/^\uFEFF/, "")
-          .replace(/\/\/.*$/gm, "")
-          .replace(/\/\*[\s\S]*?\*\//g, "")
-          .trim();
-        try { return JSON.parse(cleaned); } catch {}
-        try { return JSON.parse(cleaned.replace(/,\s*([}\]])/g, "$1")); } catch {}
+        const cleaned = stripJsonComments(candidate.replace(/^\uFEFF/, ""));
+        const candidatesToParse = [cleaned, cleaned.replace(/,\s*([}\]])/g, "$1")];
+        for (const text of candidatesToParse) {
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              const unwrapped = unwrapPlanLikeObject(parsed);
+              return unwrapped || parsed;
+            }
+          } catch {}
+        }
       }
 
       const findKeyValueStart = (text, key) => {
@@ -5594,7 +5650,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.9";
+const APP_VERSION = "0.1.10";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",

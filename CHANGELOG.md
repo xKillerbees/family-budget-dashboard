@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.10] - 2026-03-05
+
+### Fixed
+- Meal-plan JSON parsing now preserves `https://` URLs when stripping comment-like text, preventing valid AI payloads from being corrupted before parse.
+- Meal-plan parsing now only accepts top-level JSON objects (not arrays/fragments), avoiding false-positive parses that produced empty `meals`/`grocery_items` in UI.
+- Meal-plan parser now unwraps common wrapper payloads (for example `raw_model_response`) so valid nested plans render correctly in Plan Summary, Weekly Meals, and Grocery List cards.
+
 ## [0.1.9] - 2026-03-05
 
 ### Changed
