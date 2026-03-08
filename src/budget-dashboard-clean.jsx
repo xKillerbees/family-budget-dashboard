@@ -7046,9 +7046,6 @@ export default function BudgetDashboardClean() {
     <div style={{background:planBadgeColor+"22",border:`1px solid ${planBadgeColor}44`,borderRadius:12,padding:"8px 14px",textAlign:"center",flexShrink:0}}>
       <div style={{fontSize:10,color:planBadgeColor,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px"}}>{planBadgeTitle}</div>
       <div style={{fontSize:20,fontWeight:900,color:planBadgeColor,fontVariantNumeric:"tabular-nums"}}>{planBadgeValue}</div>
-      <div style={{fontSize:10,color:incomeStillExpected > 0 ? "#f59e0b" : MUTED,fontWeight:700,marginTop:4}}>
-        {incomeProgressText}
-      </div>
     </div>
   );
 
