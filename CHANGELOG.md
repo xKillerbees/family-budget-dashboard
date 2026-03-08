@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.16] - 2026-03-08
+
+### Added
+- Trends now includes a recurring-vs-other spending chart so recurring planning behavior is visible month over month.
+
+### Changed
+- Recurring planning items now retain and display their transaction dates, including seen dates in Summary and Settings.
+- Header and sidebar budget stats now separate take-home target, income received, income still expected, spent so far, and planned monthly shortfall/cushion for clearer pre-payday math.
+- Income, Tithe, and Trends charts now use dark themed hover highlights instead of bright white overlays.
+- Import help text now states more clearly that unmatched merchants are only sent to AI if you choose the optional AI categorization step in Review.
+
+### Fixed
+- Transaction actions no longer affect multiple rows when duplicate transaction IDs exist; stored IDs are repaired and new IDs are generated collision-safely.
+
 ## [0.1.15] - 2026-03-08
 
 ### Added

@@ -363,6 +363,10 @@ function Summary({wide, isMobile}) {
     ...checkTxns.filter(t => t.cat !== "Transfer" && t.cat !== "Income"),
     ...ccTxns,
   ], [checkTxns, ccTxns]);
+  const RECURRING_TXNS = useMemo(() => [
+    ...checkTxns.map(t => ({ ...t, src: "checking" })),
+    ...ccTxns.map(t => ({ ...t, src: "cc" })),
+  ].filter(isSpendTxn), [checkTxns, ccTxns]);
 
   const txnsFor = cat => [
     ...checkTxns.filter(t => t.month === selectedMonth && t.cat === cat && t.cat !== "Transfer" && t.cat !== "Income"),
@@ -701,7 +705,10 @@ function Summary({wide, isMobile}) {
                   <div>
                     <div style={{fontSize:13,color:MUTED}}>{item.name}</div>
                     <div style={{fontSize:11,color:DIM}}>
-                      {item.cat} · {recurringSourceLabel(item.src)} · starts {normalizeMonthName(item.startMonth) || selectedMonth} {item.startYear || selectedYear}
+                      {item.cat} · {recurringSourceLabel(item.src)} · starts {formatMonthYearLabel(item.startMonth || selectedMonth, item.startYear || selectedYear)}
+                    </div>
+                    <div style={{fontSize:11,color:DIM}}>
+                      {summarizeRecurringItemDates(item, RECURRING_TXNS, selectedYear)}
                     </div>
                   </div>
                   <span style={{fontSize:14,fontWeight:700,color:"#22c55e",fontVariantNumeric:"tabular-nums"}}>{fmt(item.amount)}</span>
@@ -2256,6 +2263,7 @@ function TxnTable({ src, isMobile }) {
       amount: Math.abs(Number(t.amount) || 0),
       cat: t.cat,
       src,
+      startDate: t.date || "",
       startMonth: deriveTxnMonth(t) || selectedMonth,
       startYear: deriveTxnYear(t, selectedYear) || selectedYear,
     };
@@ -2421,7 +2429,7 @@ function TxnTable({ src, isMobile }) {
               const useCompactActions = !!mobileTxnActionMenu;
 
               return (
-                <div key={i} style={{
+                <div key={t.id || `${src}-${i}`} style={{
                   padding:"11px 14px",
                   borderBottom:`1px solid ${BORDER}`,
                   background:isIncome?"#22c55e07":isTransfer?"#33415505":i%2===0?SURFACE:BG,
@@ -2577,7 +2585,7 @@ function TxnTable({ src, isMobile }) {
                 const isRecurring=isRecurringTxn(t);
                 const isEditing = editId === t.id;
                 return (
-                  <div key={i} style={{display:"grid",gridTemplateColumns:desktopTxnCols,columnGap:10,padding:"10px 16px",borderBottom:`1px solid ${BORDER}`,background:isIncome?"#22c55e07":isTransfer?"#33415507":i%2===0?SURFACE:BG,opacity:isTransfer?.5:1,minWidth:desktopTxnMinW}}>
+                  <div key={t.id || `${src}-${i}`} style={{display:"grid",gridTemplateColumns:desktopTxnCols,columnGap:10,padding:"10px 16px",borderBottom:`1px solid ${BORDER}`,background:isIncome?"#22c55e07":isTransfer?"#33415507":i%2===0?SURFACE:BG,opacity:isTransfer?.5:1,minWidth:desktopTxnMinW}}>
                     <div style={{fontSize:12,color:MUTED,alignSelf:"center"}}>
                       {isEditing
                         ? <input value={editDraft.date} onChange={e=>setEditDraft(d=>({...d,date:e.target.value}))} placeholder="MM/DD"
@@ -2699,6 +2707,7 @@ function IncomePage({ wide }) {
   const { checkTxns, ccTxns, selectedMonth, availableMonths, takeHome } = useBudget();
   const allIncomeTxns = [...checkTxns, ...ccTxns].filter(t => t.cat === "Income");
   const incomeInflow = (t) => Math.abs(Number(t?.amount) || 0);
+  const incomeHoverFill = "#22c55e12";
   const hasRealIncome = allIncomeTxns.length > 0;
   const demoBase = takeHome > 0 ? takeHome : 7862;
   const demoMonthIncomeTxns = [
@@ -2742,7 +2751,7 @@ function IncomePage({ wide }) {
           <BarChart data={monthSeries} margin={{left:8,right:8,top:12,bottom:0}}>
             <XAxis dataKey="month" tick={{fontSize:10,fill:MUTED}} axisLine={false} tickLine={false}/>
             <YAxis tick={{fontSize:10,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`${Math.round(v)}`}/>
-            <Tooltip content={<Tip/>}/>
+            <Tooltip content={<Tip/>} cursor={{ fill: incomeHoverFill }}/>
             <Bar dataKey="total" fill="#22c55e" radius={[6,6,0,0]}/>
             <ReferenceLine y={takeHome} stroke={ACCENT} strokeDasharray="4 3"/>
           </BarChart>
@@ -3847,6 +3856,8 @@ function TitheTracker({ wide, isMobile }) {
   const MONTHLY_TH = takeHome * TITHE_RATE;
   const carry = t2CarryIn;
   const setCarry = setT2CarryIn;
+  const t1HoverFill = "#7c6af714";
+  const t2HoverFill = "#f59e0b14";
 
   // Derive actual tithe data from transactions by month
   const ORDER = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -3975,7 +3986,7 @@ function TitheTracker({ wide, isMobile }) {
           <BarChart data={t1Chart} barGap={2} barCategoryGap="30%">
             <XAxis dataKey="month" tick={{fontSize:10, fill:MUTED}} axisLine={false} tickLine={false}/>
             <YAxis hide domain={[0, MONTHLY_TH * 1.5]}/>
-            <Tooltip content={<Tip/>}/>
+            <Tooltip content={<Tip/>} cursor={{ fill: t1HoverFill }}/>
             <Bar dataKey="expected" name="Expected" fill={DIM} radius={[4,4,0,0]}/>
             <Bar dataKey="actual"   name="Actual"   radius={[4,4,0,0]}>
               {t1Chart.map((d,i)=><Cell key={i} fill={d.actual!=null?(d.actual>=MONTHLY_TH?"#22c55e":"#f59e0b"):"transparent"}/>)}
@@ -4049,7 +4060,7 @@ function TitheTracker({ wide, isMobile }) {
           <BarChart data={t2Chart} barGap={3} barCategoryGap="25%">
             <XAxis dataKey="month" tick={{fontSize:10, fill:MUTED}} axisLine={false} tickLine={false}/>
             <YAxis hide/>
-            <Tooltip formatter={(v, n) => [fmt(v), n]} content={<Tip/>}/>
+            <Tooltip formatter={(v, n) => [fmt(v), n]} content={<Tip/>} cursor={{ fill: t2HoverFill }}/>
             {/* Projected bars */}
             <Bar dataKey="projected" name="Projected balance" radius={[4,4,0,0]}>
               {t2Chart.map((d,i) => (
@@ -4155,7 +4166,7 @@ Return ONLY the JSON array. Example format:
 
 // ── TRENDS ────────────────────────────────────────────────────────────────────
 function Trends({ wide, isMobile }) {
-  const { checkTxns, ccTxns, availableMonths, selectedMonth, setSelectedMonth, summaryRows, catColorsAll } = useBudget();
+  const { checkTxns, ccTxns, availableMonths, selectedMonth, selectedYear, summaryRows, recurringItems } = useBudget();
   const [focusCat, setFocusCat] = useState(null);
 
   const MONTH_ORDER = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -4165,18 +4176,27 @@ function Trends({ wide, isMobile }) {
   // Build per-month totals for each category across all available months
   const trendData = useMemo(() => {
     return availableMonths.map(m => {
+      const monthSnapshot = buildMonthBudgetSnapshot({
+        month: m,
+        year: selectedYear,
+        checkTxns,
+        ccTxns,
+        recurringItems,
+      });
       const row = { month: m.slice(0,3) };
       summaryRows.forEach(r => {
-        const c = [...checkTxns, ...ccTxns]
-          .filter(t => t.month === m && t.cat === r.cat && t.cat !== "Transfer" && t.cat !== "Income")
-          .reduce((s,t) => s + t.amount, 0);
+        const c = monthSnapshot.spendTxns
+          .filter(t => t.cat === r.cat)
+          .reduce((s,t) => s + Math.abs(Number(t.amount) || 0), 0);
         row[r.cat] = Math.round(c);
       });
-      row._total = summaryRows.reduce((s,r) => s + (row[r.cat]||0), 0);
-      row._income = checkTxns.filter(t => t.month===m && t.cat==="Income").reduce((s,t)=>s+t.amount,0);
+      row._total = Math.round(monthSnapshot.spend);
+      row._income = Math.round(monthSnapshot.incomeReceived);
+      row._recurring = Math.round(monthSnapshot.recurringSpend);
+      row._other = Math.round(monthSnapshot.nonRecurringSpend);
       return row;
     });
-  }, [checkTxns, ccTxns, availableMonths, summaryRows]);
+  }, [checkTxns, ccTxns, availableMonths, recurringItems, selectedYear, summaryRows]);
 
   // Month-over-month delta for selected cat
   const deltaData = focusCat && trendData.length >= 2
@@ -4287,6 +4307,24 @@ function Trends({ wide, isMobile }) {
                 <Area type="monotone" dataKey="income" name="Income" stroke="#22c55e" fill="#22c55e22" />
                 <Area type="monotone" dataKey="spend" name="Spending" stroke="#ef4444" fill="#ef444422" />
               </AreaChart>
+            </ResponsiveContainer>
+          </Card>
+
+          <Card>
+            <Label>Recurring vs Other Spend</Label>
+            <div style={{fontSize:12,color:MUTED,marginBottom:10}}>
+              Recurring includes transactions you marked recurring plus close merchant matches from your recurring planning items.
+            </div>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={trendData} barCategoryGap="35%">
+                <CartesianGrid stroke={BORDER} strokeDasharray="3 3" />
+                <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
+                <YAxis tick={{fontSize:11,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`} width={40}/>
+                <Tooltip cursor={{ fill: chartHoverFill }} formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
+                <Legend />
+                <Bar dataKey="_recurring" name="Recurring spend" stackId="split" fill="#22c55e" radius={[5,5,0,0]} />
+                <Bar dataKey="_other" name="Other spend" stackId="split" fill="#475569" radius={[5,5,0,0]} />
+              </BarChart>
             </ResponsiveContainer>
           </Card>
 
@@ -4607,6 +4645,10 @@ function Settings({ isMobile }) {
   const [importErr, setImportErr] = useState(null);
   const [apiKeyInput, setApiKeyInput] = useState(() => { try { return localStorage.getItem("budget_apikey") || ""; } catch { return ""; } });
   const [apiKeySaved, setApiKeySaved] = useState(false);
+  const recurringSourceTxns = useMemo(() => [
+    ...checkTxns.map(t => ({ ...t, src: "checking" })),
+    ...ccTxns.map(t => ({ ...t, src: "cc" })),
+  ].filter(isSpendTxn), [checkTxns, ccTxns]);
   const saveApiKey = () => { try { localStorage.setItem("budget_apikey", apiKeyInput); setApiKeySaved(true); setTimeout(() => setApiKeySaved(false), 2000); } catch {} };
   useEffect(() => { setFamilyInput(familySize || 4); }, [familySize]);
 
@@ -5055,7 +5097,10 @@ function Settings({ isMobile }) {
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:13,color:TEXT}}>{item.name}</div>
                   <div style={{fontSize:11,color:MUTED}}>
-                    {item.cat} · {recurringSourceLabel(item.src)} · starts {normalizeMonthName(item.startMonth)} {item.startYear}
+                    {item.cat} · {recurringSourceLabel(item.src)} · starts {formatMonthYearLabel(item.startMonth, item.startYear)}
+                  </div>
+                  <div style={{fontSize:11,color:DIM}}>
+                    {summarizeRecurringItemDates(item, recurringSourceTxns, item.startYear)}
                   </div>
                 </div>
                 <span style={{fontSize:12,color:"#22c55e",fontWeight:700}}>${Number(item.amount || 0).toLocaleString()}</span>
@@ -5922,13 +5967,13 @@ Do NOT include a "cat" field.`;
               <div>2. CSV import tries header scan, statement-export fallback, and headerless column inference locally before Review.</div>
               <div>3. If local CSV or PDF parsing fails, the error explains why local detection failed before optional AI extraction is offered.</div>
               <div>4. Category matching runs locally first using your existing transactions.</div>
-              <div>5. Only unmatched merchant descriptions are sent to AI for category suggestions.</div>
+              <div>5. Only if you choose optional AI categorization in Review are unmatched merchant descriptions sent for category suggestions.</div>
               <div>6. You review/edit every row before anything is added to your dashboard.</div>
             </div>
             <div style={{height:1,background:BORDER,margin:"10px 0"}}/>
             <div style={{fontSize:11,color:DIM,display:"grid",gap:4}}>
               <div>Data sent on AI file extraction (optional): raw CSV or PDF contents and statement type.</div>
-              <div>Data sent on AI categorization (optional): unmatched merchant descriptions and allowed category names.</div>
+              <div>Data sent on AI categorization only when you choose it in Review (optional): unmatched merchant descriptions and allowed category names.</div>
               <div>Imported transaction dates drive the month automatically from the file.</div>
               <div>No transactions are imported until you confirm in Review.</div>
             </div>
@@ -6240,7 +6285,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.15";
+const APP_VERSION = "0.1.16";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
@@ -6284,6 +6329,33 @@ function deriveTxnYear(t, fallbackYear = null) {
   const fromDate = yearFromDateString(t?.date);
   if (Number.isFinite(fromDate) && fromDate > 1900 && fromDate < 3000) return fromDate;
   return fallbackYear;
+}
+function formatMonthYearLabel(month, year) {
+  const monthLabel = normalizeMonthName(month);
+  const yearNum = Number(year);
+  return [monthLabel, Number.isFinite(yearNum) ? String(yearNum) : ""].filter(Boolean).join(" ");
+}
+function getTxnDateMeta(txn, fallbackYear = null) {
+  const date = fingerprintTxnDate(txn?.date);
+  const mmdd = date.match(/^(\d{2})\/(\d{2})$/);
+  if (!mmdd) return null;
+  const monthNum = Number(mmdd[1]);
+  const dayNum = Number(mmdd[2]);
+  if (monthNum < 1 || monthNum > 12 || dayNum < 1 || dayNum > 31) return null;
+  const year = deriveTxnYear(txn, fallbackYear);
+  return { monthNum, dayNum, year };
+}
+function txnDateSortValue(txn, fallbackYear = null) {
+  const meta = getTxnDateMeta(txn, fallbackYear);
+  if (!meta) return -1;
+  const yearNum = Number.isFinite(meta.year) ? meta.year : 0;
+  return (yearNum * 10000) + (meta.monthNum * 100) + meta.dayNum;
+}
+function formatTxnDateLabel(txn, fallbackYear = null) {
+  const meta = getTxnDateMeta(txn, fallbackYear);
+  if (!meta) return (txn?.date || "").toString().trim();
+  const monthLabel = APP_MONTHS[meta.monthNum - 1]?.slice(0, 3) || "";
+  return Number.isFinite(meta.year) ? `${monthLabel} ${meta.dayNum}, ${meta.year}` : `${monthLabel} ${meta.dayNum}`;
 }
 const TXN_NOTE_FLAGS = ["ONE-TIME", "RECURRING"];
 function hasTxnNoteFlag(note, flag) {
@@ -6414,12 +6486,17 @@ function buildRecurringItemKey(item) {
     item?.cat || "",
     Math.round(Math.abs(Number(item?.amount) || 0) * 100),
     fingerprintTxnDesc(item?.name || ""),
+    fingerprintTxnDate(item?.startDate || ""),
     Number(item?.startYear) || "",
     normalizeMonthName(item?.startMonth) || "",
   ].join("|");
 }
 function recurringSourceLabel(src) {
   return src === "cc" ? "Credit Card" : "Checking";
+}
+function isSpendTxn(txn) {
+  const amount = Number(txn?.amount);
+  return Number.isFinite(amount) && amount > 0 && txn?.cat !== "Income" && txn?.cat !== "Transfer";
 }
 function recurringTxnMatchesItem(txn, item) {
   if (!txn || !item) return false;
@@ -6431,6 +6508,65 @@ function recurringTxnMatchesItem(txn, item) {
   const txnAmt = Math.abs(Number(txn.amount) || 0);
   const itemAmt = Math.abs(Number(item.amount) || 0);
   return Math.abs(txnAmt - itemAmt) <= Math.max(5, itemAmt * 0.35);
+}
+function isTxnRecurringSpend(txn, recurringItems = []) {
+  if (!isSpendTxn(txn)) return false;
+  if (hasTxnNoteFlag(txn.note, "RECURRING")) return true;
+  return recurringItems.some(item => recurringTxnMatchesItem(txn, item));
+}
+function getRecurringItemSeenDates(item, txns = [], fallbackYear = null) {
+  const seen = new Map();
+  txns.forEach(txn => {
+    if (!isSpendTxn(txn) || !recurringTxnMatchesItem(txn, item)) return;
+    const label = formatTxnDateLabel(txn, fallbackYear);
+    if (!label) return;
+    const sortValue = txnDateSortValue(txn, fallbackYear);
+    const prevValue = seen.get(label);
+    if (prevValue == null || sortValue > prevValue) seen.set(label, sortValue);
+  });
+  return [...seen.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([label]) => label);
+}
+function summarizeRecurringItemDates(item, txns = [], fallbackYear = null) {
+  const seenDates = getRecurringItemSeenDates(item, txns, fallbackYear);
+  if (seenDates.length) {
+    const preview = seenDates.slice(0, 3);
+    const extra = seenDates.length - preview.length;
+    return `Seen: ${preview.join(" · ")}${extra > 0 ? ` · +${extra} more` : ""}`;
+  }
+  const firstMarked = formatTxnDateLabel({ date: item?.startDate, year: item?.startYear }, fallbackYear ?? item?.startYear);
+  if (firstMarked) return `First marked: ${firstMarked}`;
+  const startLabel = formatMonthYearLabel(item?.startMonth, item?.startYear ?? fallbackYear);
+  return startLabel ? `Starts: ${startLabel}` : "";
+}
+function buildMonthBudgetSnapshot({
+  month, year, checkTxns = [], ccTxns = [], recurringItems = [],
+}) {
+  const txns = [
+    ...checkTxns
+      .filter(t => deriveTxnMonth(t) === month && deriveTxnYear(t, year) === year)
+      .map(t => ({ ...t, src: "checking" })),
+    ...ccTxns
+      .filter(t => deriveTxnMonth(t) === month && deriveTxnYear(t, year) === year)
+      .map(t => ({ ...t, src: "cc" })),
+  ];
+  const incomeReceived = txns
+    .filter(t => t.cat === "Income")
+    .reduce((sum, txn) => sum + Math.abs(Number(txn.amount) || 0), 0);
+  const spendTxns = txns.filter(isSpendTxn);
+  const spend = spendTxns.reduce((sum, txn) => sum + Math.abs(Number(txn.amount) || 0), 0);
+  const recurringSpend = spendTxns
+    .filter(txn => isTxnRecurringSpend(txn, recurringItems))
+    .reduce((sum, txn) => sum + Math.abs(Number(txn.amount) || 0), 0);
+  return {
+    txns,
+    spendTxns,
+    incomeReceived,
+    spend,
+    recurringSpend,
+    nonRecurringSpend: Math.max(0, spend - recurringSpend),
+  };
 }
 function recurringPlanDeltaForCategory({
   cat, selectedMonth, selectedYear, recurringItems, checkTxns, ccTxns,
@@ -6494,6 +6630,37 @@ function latestYearFromTxns(checkTxns = [], ccTxns = [], fallbackYear = new Date
   if (!years.length) return fallbackYear;
   return Math.max(...years);
 }
+function makeTxnId(prefix, usedIds = new Set()) {
+  let id = "";
+  do {
+    id = `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  } while (usedIds.has(id));
+  usedIds.add(id);
+  return id;
+}
+function normalizeTxnIds(txns = [], prefix = "t") {
+  const usedIds = new Set();
+  let changed = false;
+  const next = txns.map(txn => {
+    const currentId = typeof txn?.id === "string" ? txn.id.trim() : "";
+    if (!currentId || usedIds.has(currentId)) {
+      changed = true;
+      return { ...txn, id: makeTxnId(prefix, usedIds) };
+    }
+    usedIds.add(currentId);
+    return txn;
+  });
+  return changed ? next : txns;
+}
+function hasDuplicateTxnIds(txns = []) {
+  const seen = new Set();
+  for (const txn of txns) {
+    const id = typeof txn?.id === "string" ? txn.id.trim() : "";
+    if (!id || seen.has(id)) return true;
+    seen.add(id);
+  }
+  return false;
+}
 
 // ── APP ───────────────────────────────────────────────────────────────────────
 export default function BudgetDashboardClean() {
@@ -6511,10 +6678,16 @@ export default function BudgetDashboardClean() {
 
   // ── Live transaction state — persisted to localStorage ────────────────────
   const [checkTxns, setCheckTxns] = useState(() => {
-    return ls.getJSON("budget_checkTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, currentYear), excludeFromTags: !!t.excludeFromTags }));
+    return normalizeTxnIds(
+      ls.getJSON("budget_checkTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, currentYear), excludeFromTags: !!t.excludeFromTags })),
+      "c",
+    );
   });
   const [ccTxns, setCCTxns] = useState(() => {
-    return ls.getJSON("budget_ccTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, currentYear), excludeFromTags: !!t.excludeFromTags }));
+    return normalizeTxnIds(
+      ls.getJSON("budget_ccTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, currentYear), excludeFromTags: !!t.excludeFromTags })),
+      "cc",
+    );
   });
 
   const [selectedMonth, setSelectedMonth] = useState(() => latestMonthFromTxns(
@@ -6557,6 +6730,16 @@ export default function BudgetDashboardClean() {
   useEffect(() => { ls.set("budget_groceryGoal", String(groceryGoal)); }, [groceryGoal]);
   useEffect(() => { ls.set("budget_familySize", String(familySize)); }, [familySize]);
   useEffect(() => { ls.set("budget_selectedYear", String(selectedYear)); }, [selectedYear]);
+  useEffect(() => {
+    if (hasDuplicateTxnIds(checkTxns)) {
+      setCheckTxns(prev => normalizeTxnIds(prev, "c"));
+    }
+  }, [checkTxns]);
+  useEffect(() => {
+    if (hasDuplicateTxnIds(ccTxns)) {
+      setCCTxns(prev => normalizeTxnIds(prev, "cc"));
+    }
+  }, [ccTxns]);
 
   // All months that have transaction data
   const availableMonths = useMemo(() => {
@@ -6685,7 +6868,8 @@ export default function BudgetDashboardClean() {
         const idx = prev.findIndex(t => t.id === id);
         if (idx < 0) return prev;
         const base = prev[idx];
-        const splits = splitTxns.map((t, i) => ({ ...base, ...t, id: `c${Date.now()}${i}`, note: (t.note||"")+" [split]" }));
+        const usedIds = new Set(prev.filter(t => t.id !== id).map(t => t.id).filter(Boolean));
+        const splits = splitTxns.map(t => ({ ...base, ...t, id: makeTxnId("c", usedIds), note: (t.note||"")+" [split]" }));
         return [...prev.slice(0, idx), ...splits, ...prev.slice(idx + 1)];
       });
     } else {
@@ -6693,7 +6877,8 @@ export default function BudgetDashboardClean() {
         const idx = prev.findIndex(t => t.id === id);
         if (idx < 0) return prev;
         const base = prev[idx];
-        const splits = splitTxns.map((t, i) => ({ ...base, ...t, id: `cc${Date.now()}${i}`, note: (t.note||"")+" [split]" }));
+        const usedIds = new Set(prev.filter(t => t.id !== id).map(t => t.id).filter(Boolean));
+        const splits = splitTxns.map(t => ({ ...base, ...t, id: makeTxnId("cc", usedIds), note: (t.note||"")+" [split]" }));
         return [...prev.slice(0, idx), ...splits, ...prev.slice(idx + 1)];
       });
     }
@@ -6708,13 +6893,13 @@ export default function BudgetDashboardClean() {
   const addTxns = useCallback((src, newTxns) => {
     if (src === "checking") {
       setCheckTxns(prev => {
-        const nextIdx = prev.length;
-        return [...prev, ...newTxns.map((t, i) => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, selectedYear), excludeFromTags: !!t.excludeFromTags, id: `c${nextIdx + i}` }))];
+        const usedIds = new Set(prev.map(t => t.id).filter(Boolean));
+        return [...prev, ...newTxns.map(t => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, selectedYear), excludeFromTags: !!t.excludeFromTags, id: makeTxnId("c", usedIds) }))];
       });
     } else {
       setCCTxns(prev => {
-        const nextIdx = prev.length;
-        return [...prev, ...newTxns.map((t, i) => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, selectedYear), excludeFromTags: !!t.excludeFromTags, id: `cc${nextIdx + i}` }))];
+        const usedIds = new Set(prev.map(t => t.id).filter(Boolean));
+        return [...prev, ...newTxns.map(t => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, selectedYear), excludeFromTags: !!t.excludeFromTags, id: makeTxnId("cc", usedIds) }))];
       });
     }
   }, [selectedYear]);
@@ -6776,6 +6961,31 @@ export default function BudgetDashboardClean() {
   const janActual   = summaryRows.reduce((s, r) => s + r.checking + r.cc, 0);
   const normTotal   = summaryRows.reduce((s, r) => s + r.norm, 0);
   const normSurplus = takeHome - normTotal;
+  const monthSnapshot = useMemo(() => buildMonthBudgetSnapshot({
+    month: selectedMonth,
+    year: selectedYear,
+    checkTxns,
+    ccTxns,
+    recurringItems,
+  }), [selectedMonth, selectedYear, checkTxns, ccTxns, recurringItems]);
+  const incomeReceivedSoFar = monthSnapshot.incomeReceived;
+  const spentSoFar = monthSnapshot.spend;
+  const incomeStillExpected = Math.max(0, takeHome - incomeReceivedSoFar);
+  const incomeAboveTarget = Math.max(0, incomeReceivedSoFar - takeHome);
+  const planBadgeColor = normSurplus < 0 ? "#ef4444" : "#22c55e";
+  const planStatusLabel = normSurplus >= 0 ? "Monthly Plan: On Track" : "Monthly Plan: Needs Attention";
+  const planBadgeTitle = normSurplus < 0 ? "Planned Month Shortfall" : "Planned Month Cushion";
+  const planBadgeValue = `${normSurplus < 0 ? "−" : "+"}${fmt(Math.abs(normSurplus))}`;
+  const incomeProgressText = incomeStillExpected > 0
+    ? `Income still expected: ${fmt(incomeStillExpected)}`
+    : incomeAboveTarget > 0
+      ? `Income above target: +${fmt(incomeAboveTarget)}`
+      : "Income target received";
+  const incomeProgressRow = incomeStillExpected > 0
+    ? { label: "Still expected", value: fmt(incomeStillExpected), color: "#f59e0b" }
+    : incomeAboveTarget > 0
+      ? { label: "Above target", value: `+${fmt(incomeAboveTarget)}`, color: "#22c55e" }
+      : { label: "Income target hit", value: fmt(0), color: "#22c55e" };
 
   const budget = {
     summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus,
@@ -6833,9 +7043,12 @@ export default function BudgetDashboardClean() {
   const mobileRow2    = visibleNav.slice(mobileRow1Len);
 
   const gapBadge = (
-    <div style={{background:"#ef444422",border:"1px solid #ef444444",borderRadius:12,padding:"8px 14px",textAlign:"center",flexShrink:0}}>
-      <div style={{fontSize:10,color:"#ef4444",fontWeight:700,textTransform:"uppercase",letterSpacing:".5px"}}>Gap</div>
-      <div style={{fontSize:20,fontWeight:900,color:"#ef4444",fontVariantNumeric:"tabular-nums"}}>−{fmt(Math.abs(normSurplus))}</div>
+    <div style={{background:planBadgeColor+"22",border:`1px solid ${planBadgeColor}44`,borderRadius:12,padding:"8px 14px",textAlign:"center",flexShrink:0}}>
+      <div style={{fontSize:10,color:planBadgeColor,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px"}}>{planBadgeTitle}</div>
+      <div style={{fontSize:20,fontWeight:900,color:planBadgeColor,fontVariantNumeric:"tabular-nums"}}>{planBadgeValue}</div>
+      <div style={{fontSize:10,color:incomeStillExpected > 0 ? "#f59e0b" : MUTED,fontWeight:700,marginTop:4}}>
+        {incomeProgressText}
+      </div>
     </div>
   );
 
@@ -6884,9 +7097,12 @@ export default function BudgetDashboardClean() {
                 <div style={{fontSize:11,color:MUTED,marginTop:2}}>{selectedMonth} {selectedYear} · {visibleNav.find(n=>n.id===page)?.label}</div>
               </div>
               {/* Compact gap badge */}
-              <div style={{background:"#ef444422",border:"1px solid #ef444444",borderRadius:10,padding:"5px 10px",textAlign:"center",flexShrink:0}}>
-                <div style={{fontSize:9,color:"#ef4444",fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",lineHeight:1}}>GAP</div>
-                <div style={{fontSize:16,fontWeight:900,color:"#ef4444",fontVariantNumeric:"tabular-nums",lineHeight:1.2}}>−{fmt(Math.abs(normSurplus))}</div>
+              <div style={{background:planBadgeColor+"22",border:`1px solid ${planBadgeColor}44`,borderRadius:10,padding:"5px 10px",textAlign:"center",flexShrink:0}}>
+                <div style={{fontSize:8,color:planBadgeColor,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",lineHeight:1}}>{normSurplus < 0 ? "PLAN SHORTFALL" : "PLAN CUSHION"}</div>
+                <div style={{fontSize:16,fontWeight:900,color:planBadgeColor,fontVariantNumeric:"tabular-nums",lineHeight:1.2}}>{planBadgeValue}</div>
+                <div style={{fontSize:9,color:incomeStillExpected > 0 ? "#f59e0b" : MUTED,fontWeight:700,lineHeight:1.1}}>
+                  {incomeStillExpected > 0 ? `Pending ${fmt(incomeStillExpected)}` : "Target received"}
+                </div>
               </div>
             </div>
             {/* Row 2: year selector */}
@@ -6990,12 +7206,21 @@ export default function BudgetDashboardClean() {
             </nav>
             <div style={{padding:"16px 20px",borderTop:`1px solid ${BORDER}`}}>
               <div style={{fontSize:11,color:DIM,fontWeight:700,textTransform:"uppercase",letterSpacing:".6px",marginBottom:10}}>Quick Stats · {selectedMonth}</div>
-              {[["Take-home",fmt(takeHome),ACCENT],["Spending",fmt(janActual),"#ef4444"],["Gap",fmt(Math.abs(normSurplus)),"#ef4444"]].map(([k,v,c])=>(
+              {[
+                ["Take-home target", fmt(takeHome), ACCENT],
+                ["Income received", fmt(incomeReceivedSoFar), incomeReceivedSoFar > 0 ? "#22c55e" : MUTED],
+                [incomeProgressRow.label, incomeProgressRow.value, incomeProgressRow.color],
+                ["Spent so far", fmt(spentSoFar), "#06b6d4"],
+                [normSurplus < 0 ? "Plan shortfall" : "Plan cushion", planBadgeValue, planBadgeColor],
+              ].map(([k,v,c])=>(
                 <div key={k} style={{display:"flex",justifyContent:"space-between",marginBottom:7}}>
                   <span style={{fontSize:12,color:MUTED}}>{k}</span>
                   <span style={{fontSize:12,fontWeight:800,color:c,fontVariantNumeric:"tabular-nums"}}>{v}</span>
                 </div>
               ))}
+              <div style={{fontSize:10,color:DIM,lineHeight:1.5,marginTop:10}}>
+                Planned shortfall uses your normalized monthly plan, not whether this month's paycheck has arrived yet.
+              </div>
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${BORDER}`}}>
                 <a href={REPO_URL} target="_blank" rel="noreferrer" style={{fontSize:11,color:DIM,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
                   <span aria-hidden="true">🐙</span>
@@ -7013,10 +7238,14 @@ export default function BudgetDashboardClean() {
                 </div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
                   <Tag color={normSurplus>=0 ? "#22c55e" : "#f59e0b"}>
-                    My Budget Status: {normSurplus>=0 ? "On Track" : "Needs Attention"}
+                    {planStatusLabel}
                   </Tag>
-                  <Tag color="#22c55e">Take-home: {fmt(takeHome)}</Tag>
-                  <Tag color="#06b6d4">Spent: {fmt(janActual)}</Tag>
+                  <Tag color={ACCENT}>Take-home target: {fmt(takeHome)}</Tag>
+                  <Tag color={incomeReceivedSoFar > 0 ? "#22c55e" : "#f59e0b"}>Income received: {fmt(incomeReceivedSoFar)}</Tag>
+                  {incomeStillExpected > 0
+                    ? <Tag color="#f59e0b">Still expected: {fmt(incomeStillExpected)}</Tag>
+                    : <Tag color="#22c55e">Income target received</Tag>}
+                  <Tag color="#06b6d4">Spent so far: {fmt(spentSoFar)}</Tag>
                 </div>
               </div>
               {gapBadge}

@@ -16,7 +16,7 @@ React + Vite budget dashboard for tracking spending, payoffs, scenarios, and mon
 
 - Summary dashboard with category totals, targets, progress bars, Sankey flow, and breakdown charts.
 - Checking and Credit Card transaction pages:
-  - Add, edit, split, and delete transactions
+  - Add, edit, split, delete, and mark recurring planning transactions
   - Month/category/search filters
 - Month-aware data model:
   - Transaction month can be derived from transaction date (`MM/DD`)
@@ -32,13 +32,16 @@ React + Vite budget dashboard for tracking spending, payoffs, scenarios, and mon
   - Vendor/store breakdown, spotlight mode, and spotlight totals
 - Trends:
   - Multi-month trend charts when 2+ months exist
+  - Recurring vs other spending comparison across months
   - Example preview charts when only one month exists
+- Shell stats:
+  - Header/sidebar distinguish take-home target, income received so far, income still expected, and planned monthly shortfall/cushion
 - Import:
   - Local CSV/PDF parsing and review workflow
   - CSV parsing tries header scan, bank/statement-export fallback, and headerless column inference
   - Duplicate transaction warnings before import confirmation
   - Optional AI extraction fallback for CSV/PDF only when local parsing is insufficient
-  - Optional AI categorization in Review for unmatched merchants
+  - Optional AI categorization in Review for unmatched merchants only after you choose that step
 
 ## AI Features
 
@@ -48,6 +51,8 @@ AI is used in two places:
 2. Tips/recommendations refresh (optional)
 
 Import extraction stays local-first. If local parsing cannot confidently detect transactions, the app explains the failure reason and lets you optionally send the raw CSV or PDF contents to AI for extraction.
+
+Import categorization is also opt-in. Unmatched merchant descriptions are only sent if you choose the AI categorization step during Review.
 
 Tips are saved per month, and the UI can display the last AI prompt used for the selected month.
 
