@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.12] - 2026-03-08
+
+### Added
+- Import review now flags possible duplicate transactions by matching date, amount, description, and year against the selected account plus repeated rows inside the current file.
+
+### Changed
+- Import review shows a duplicate-warning banner with one-click exclude/re-select actions, and final import now asks for confirmation if flagged duplicate rows are still selected.
+
 ## [0.1.11] - 2026-03-05
 
 ### Added

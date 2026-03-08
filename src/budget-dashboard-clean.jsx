@@ -5023,7 +5023,7 @@ function Settings({ isMobile }) {
 
 
 function StatementImporter({ wide, isMobile }) {
-  const { addTxns, checkTxns, ccTxns, allCats, catColorsAll } = useBudget();
+  const { addTxns, checkTxns, ccTxns, allCats, catColorsAll, selectedYear } = useBudget();
 
   // Steps: "upload" → "parsing" → "review" → "done"
   const [step, setStep]         = useState("upload");
@@ -5375,9 +5375,15 @@ Do NOT include a "cat" field.`;
 
   // ── Confirm: push to live state ─────────────────────────────────────────────
   const confirm = () => {
+    if (selectedDuplicateCount > 0) {
+      const parts = [];
+      if (selectedExistingDuplicateCount > 0) parts.push(`${selectedExistingDuplicateCount} already exist in ${stmtSrc === "checking" ? "checking" : "credit card"}`);
+      if (selectedImportDuplicateCount > 0) parts.push(`${selectedImportDuplicateCount} repeat in this import`);
+      if (!confirmDeleteAction(`You still have ${selectedDuplicateCount} possible duplicate transaction${selectedDuplicateCount === 1 ? "" : "s"} selected${parts.length ? ` (${parts.join("; ")})` : ""}. Import them anyway?`)) return;
+    }
     const toAdd = reviewed
       .filter(t => t._include)
-      .map(({ _include, ...t }) => ({ ...t, month }));
+      .map(({ _include, ...t }) => ({ ...t, month, year: selectedYear }));
     addTxns(stmtSrc, toAdd);
     setStep("done");
   };
@@ -5445,6 +5451,43 @@ Do NOT include a "cat" field.`;
     setStep("upload"); setFileName(null); setFileType(null); setPdfB64(null); setCsvText(null);
     setParsed([]); setReviewed([]); setParseError(null); setEditingIdx(null);
     setAiRanOnCsv(false); setRunningAI(false); setLocalPdfFailed(false); setParsingMode("local");
+  };
+
+  const duplicateRows = useMemo(() => {
+    const existingFingerprints = new Set(
+      (stmtSrc === "checking" ? checkTxns : ccTxns)
+        .map(t => buildTxnFingerprint(t, selectedYear))
+        .filter(Boolean)
+    );
+    const reviewFingerprints = reviewed.map(t => buildTxnFingerprint({ ...t, month, year: selectedYear }, selectedYear));
+    const fingerprintCounts = new Map();
+    reviewFingerprints.forEach(key => {
+      if (!key) return;
+      fingerprintCounts.set(key, (fingerprintCounts.get(key) || 0) + 1);
+    });
+    return reviewFingerprints.map(key => {
+      const matchesExisting = !!key && existingFingerprints.has(key);
+      const repeatsInImport = !!key && (fingerprintCounts.get(key) || 0) > 1;
+      return {
+        matchesExisting,
+        repeatsInImport,
+        flagged: matchesExisting || repeatsInImport,
+      };
+    });
+  }, [stmtSrc, checkTxns, ccTxns, reviewed, month, selectedYear]);
+
+  const duplicateCount = duplicateRows.filter(r => r.flagged).length;
+  const existingDuplicateCount = duplicateRows.filter(r => r.matchesExisting).length;
+  const importDuplicateCount = duplicateRows.filter(r => r.repeatsInImport).length;
+  const selectedDuplicateCount = duplicateRows.reduce((sum, r, idx) => sum + (r.flagged && reviewed[idx]?._include ? 1 : 0), 0);
+  const selectedExistingDuplicateCount = duplicateRows.reduce((sum, r, idx) => sum + (r.matchesExisting && reviewed[idx]?._include ? 1 : 0), 0);
+  const selectedImportDuplicateCount = duplicateRows.reduce((sum, r, idx) => sum + (r.repeatsInImport && reviewed[idx]?._include ? 1 : 0), 0);
+
+  const excludeFlaggedDuplicates = () => {
+    setReviewed(prev => prev.map((t, idx) => duplicateRows[idx]?.flagged ? { ...t, _include: false } : t));
+  };
+  const includeFlaggedDuplicates = () => {
+    setReviewed(prev => prev.map((t, idx) => duplicateRows[idx]?.flagged ? { ...t, _include: true } : t));
   };
 
   const includedCount = reviewed.filter(t => t._include).length;
@@ -5598,7 +5641,7 @@ Do NOT include a "cat" field.`;
               <div>
                 <div style={{fontSize:16,fontWeight:800,color:TEXT}}>Review {parsed.length} transactions</div>
                 <div style={{fontSize:12,color:MUTED,marginTop:2}}>
-                  {stmtSrc==="checking"?"🏦 Checking":"💳 Credit Card"} · {month} 2026 · Uncheck any you want to exclude
+                  {stmtSrc==="checking"?"🏦 Checking":"💳 Credit Card"} · {month} {selectedYear} · Uncheck any you want to exclude
                 </div>
                 {matchStats && (
                   <div style={{marginTop:6,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
@@ -5640,6 +5683,32 @@ Do NOT include a "cat" field.`;
             </div>
           </Card>
 
+          {duplicateCount > 0 && (
+            <Card style={{border:"1px solid #f59e0b55",background:"#f59e0b10"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:800,color:"#fbbf24"}}>Possible duplicates found</div>
+                  <div style={{fontSize:12,color:"#fde68a",marginTop:4}}>
+                    {duplicateCount} row{duplicateCount === 1 ? "" : "s"} matched the duplicate check. {selectedDuplicateCount} {selectedDuplicateCount === 1 ? "is" : "are"} still selected.
+                  </div>
+                  <div style={{fontSize:11,color:"#fcd34d",marginTop:6}}>
+                    {existingDuplicateCount} match existing {stmtSrc === "checking" ? "checking" : "credit card"} transactions in {selectedYear}. {importDuplicateCount} repeat inside this import file.
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <button onClick={excludeFlaggedDuplicates} style={{
+                    padding:"8px 12px",borderRadius:10,fontSize:12,fontWeight:800,cursor:"pointer",
+                    background:"#f59e0b22",color:"#fbbf24",border:"1px solid #f59e0b44",
+                  }}>Exclude flagged rows</button>
+                  <button onClick={includeFlaggedDuplicates} style={{
+                    padding:"8px 12px",borderRadius:10,fontSize:12,fontWeight:700,cursor:"pointer",
+                    background:BG,color:MUTED,border:`1px solid ${BORDER}`,
+                  }}>Re-select flagged rows</button>
+                </div>
+              </div>
+            </Card>
+          )}
+
           {/* Transaction review table */}
           <Card style={{padding:0,overflow:"hidden"}}>
             {/* Header */}
@@ -5652,11 +5721,12 @@ Do NOT include a "cat" field.`;
             {reviewed.map((t, idx) => {
               const color = catColorsAll[t.cat] || MUTED;
               const isTransfer = t.cat==="Transfer"||t.cat==="Income";
+              const duplicateInfo = duplicateRows[idx] || {};
               return (
                 <div key={idx} style={{
                   display:"grid",gridTemplateColumns:"36px 60px 1fr 90px 130px",
                   padding:"9px 16px",borderBottom:`1px solid ${BORDER}`,
-                  background:!t._include?"#33415511":isTransfer?"#33415508":idx%2===0?SURFACE:BG,
+                  background:!t._include?"#33415511":duplicateInfo.flagged?"#f59e0b12":isTransfer?"#33415508":idx%2===0?SURFACE:BG,
                   opacity:t._include?1:0.45,alignItems:"center",transition:"all .15s",
                 }}>
                   {/* Checkbox */}
@@ -5677,9 +5747,15 @@ Do NOT include a "cat" field.`;
                           onBlur={()=>setEditingIdx(null)}
                           style={{width:"100%",background:BG,border:`1px solid ${accentImport}`,borderRadius:6,padding:"3px 8px",color:TEXT,fontSize:13,outline:"none"}}
                         />
-                      : <div onClick={()=>setEditingIdx(idx)} style={{fontSize:13,color:isTransfer?MUTED:TEXT,cursor:"text",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}} title="Click to edit">
-                          {t.desc}
-                          {t._localMatch && <span style={{marginLeft:5,fontSize:9,fontWeight:700,background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e33",borderRadius:4,padding:"1px 4px"}}>✓ known</span>}
+                      : <div onClick={()=>setEditingIdx(idx)} style={{cursor:"text"}} title="Click to edit">
+                          <div style={{fontSize:13,color:isTransfer?MUTED:TEXT,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                            {t.desc}
+                          </div>
+                          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:4}}>
+                            {t._localMatch && <span style={{fontSize:9,fontWeight:700,background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e33",borderRadius:4,padding:"1px 4px"}}>✓ known</span>}
+                            {duplicateInfo.matchesExisting && <span style={{fontSize:9,fontWeight:700,background:"#f59e0b22",color:"#fbbf24",border:"1px solid #f59e0b33",borderRadius:4,padding:"1px 4px"}}>⚠ matches existing</span>}
+                            {duplicateInfo.repeatsInImport && <span style={{fontSize:9,fontWeight:700,background:"#fb923c22",color:"#fdba74",border:"1px solid #fb923c33",borderRadius:4,padding:"1px 4px"}}>↺ repeated in file</span>}
+                          </div>
                         </div>
                     }
                     {t.note&&<div style={{fontSize:10,color:DIM,marginTop:1}}>{t.note}</div>}
@@ -5770,7 +5846,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.11";
+const APP_VERSION = "0.1.12";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
@@ -5814,6 +5890,32 @@ function deriveTxnYear(t, fallbackYear = null) {
   const fromDate = yearFromDateString(t?.date);
   if (Number.isFinite(fromDate) && fromDate > 1900 && fromDate < 3000) return fromDate;
   return fallbackYear;
+}
+function fingerprintTxnDate(dateStr) {
+  const s = (dateStr || "").toString().trim();
+  if (!s) return "";
+  const ymd = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (ymd) return `${ymd[2].padStart(2, "0")}/${ymd[3].padStart(2, "0")}`;
+  const mdy = s.match(/^(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{2}|\d{4}))?$/);
+  if (mdy) return `${mdy[1].padStart(2, "0")}/${mdy[2].padStart(2, "0")}`;
+  return s;
+}
+function fingerprintTxnDesc(desc) {
+  return (desc || "")
+    .toString()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 48);
+}
+function buildTxnFingerprint(txn, fallbackYear = null) {
+  const date = fingerprintTxnDate(txn?.date);
+  const desc = fingerprintTxnDesc(txn?.desc);
+  const amount = Number(txn?.amount);
+  const year = deriveTxnYear(txn, fallbackYear);
+  if (!date || !desc || !Number.isFinite(amount) || !Number.isFinite(year)) return null;
+  return `${year}|${date}|${Math.round(amount * 100)}|${desc}`;
 }
 function latestMonthFromTxns(checkTxns = [], ccTxns = []) {
   const all = [...checkTxns, ...ccTxns].map(t => deriveTxnMonth(t)).filter(Boolean);
