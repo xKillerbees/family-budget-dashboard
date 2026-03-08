@@ -5303,28 +5303,40 @@ function StatementImporter({ wide, isMobile }) {
 
   // ── Build a local category dictionary from existing transactions ──────────
   const buildLocalDict = () => {
-    const dict = {}; // normalized desc → cat
-    [...checkTxns, ...ccTxns].forEach(t => {
+    return [...checkTxns, ...ccTxns].flatMap(t => {
       if (t.cat && t.cat !== "Transfer" && t.cat !== "Income" && t.desc) {
-        const key = t.desc.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim().slice(0, 30);
-        if (key) dict[key] = t.cat;
+        const sig = buildMerchantSignature(t.desc);
+        if (sig.core) return [{ cat: t.cat, desc: t.desc, sig }];
       }
+      return [];
     });
-    return dict;
   };
 
-  const normalizeDesc = desc =>
-    desc.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim().slice(0, 30);
-
   const findLocalCat = (desc, dict) => {
-    const norm = normalizeDesc(desc);
-    // Exact match
-    if (dict[norm]) return dict[norm];
-    // Partial match — check if any known key is contained in the desc or vice versa
-    for (const [key, cat] of Object.entries(dict)) {
-      if (norm.includes(key) || key.includes(norm)) return cat;
-    }
-    return null;
+    const sig = buildMerchantSignature(desc);
+    if (!sig.core) return null;
+    const scoresByCat = new Map();
+    const sampleByCat = new Map();
+    dict.forEach(entry => {
+      const score = merchantSimilarity(sig, entry.sig);
+      if (score < 0.45) return;
+      scoresByCat.set(entry.cat, (scoresByCat.get(entry.cat) || 0) + score);
+      const sample = sampleByCat.get(entry.cat);
+      if (!sample || score > sample.score) sampleByCat.set(entry.cat, { score, desc: entry.desc });
+    });
+    let bestCat = null;
+    let bestScore = 0;
+    scoresByCat.forEach((score, cat) => {
+      if (score > bestScore) { bestCat = cat; bestScore = score; }
+    });
+    if (!bestCat || bestScore < 0.58) return null;
+    const sample = sampleByCat.get(bestCat);
+    return {
+      cat: bestCat,
+      score: sample?.score || bestScore,
+      exact: (sample?.score || bestScore) >= 0.92,
+      desc: sample?.desc || "",
+    };
   };
 
   // ── Parse statement: local-first, AI only for unknowns ─────────────────────
@@ -5348,8 +5360,14 @@ function StatementImporter({ wide, isMobile }) {
         return;
       }
       const withCats = raw.map(t => {
-        const localCat = findLocalCat(t.desc, dict);
-        return { ...t, cat: localCat || "Snacks/Misc", _localMatch: !!localCat };
+        const localMatch = findLocalCat(t.desc, dict);
+        return {
+          ...t,
+          cat: localMatch?.cat || "Snacks/Misc",
+          _localMatch: !!localMatch,
+          _localMatchPossible: !!localMatch && !localMatch.exact,
+          _localMatchDesc: localMatch?.desc || "",
+        };
       });
       const filtered = stmtSrc === "checking" ? withCats : withCats.filter(t => t.cat !== "Income" && t.cat !== "Transfer");
       const localCount = filtered.filter(t => t._localMatch).length;
@@ -5425,8 +5443,14 @@ function StatementImporter({ wide, isMobile }) {
         return;
       }
       const withCats = raw.map(t => {
-        const localCat = findLocalCat(t.desc, dict);
-        return { ...t, cat: localCat || "Snacks/Misc", _localMatch: !!localCat };
+        const localMatch = findLocalCat(t.desc, dict);
+        return {
+          ...t,
+          cat: localMatch?.cat || "Snacks/Misc",
+          _localMatch: !!localMatch,
+          _localMatchPossible: !!localMatch && !localMatch.exact,
+          _localMatchDesc: localMatch?.desc || "",
+        };
       });
       const filtered = withCats.filter(t => stmtSrc === "checking" ? true : t.cat !== "Income" && t.cat !== "Transfer");
       const localCount = filtered.filter(t => t._localMatch).length;
@@ -5546,8 +5570,16 @@ Do NOT include a "cat" field.`;
       const localDict = buildLocalDict();
       const unmatched = []; // { originalIdx, desc }
       const withCats = normalizedRaw.map((t, i) => {
-        const localCat = findLocalCat(t.desc, localDict);
-        if (localCat) return { ...t, cat: localCat, _localMatch: true };
+        const localMatch = findLocalCat(t.desc, localDict);
+        if (localMatch) {
+          return {
+            ...t,
+            cat: localMatch.cat,
+            _localMatch: true,
+            _localMatchPossible: !localMatch.exact,
+            _localMatchDesc: localMatch.desc || "",
+          };
+        }
         unmatched.push({ i: String(i), desc: t.desc });
         return { ...t, _localMatch: false };
       });
@@ -5662,34 +5694,57 @@ Do NOT include a "cat" field.`;
   };
 
   const duplicateRows = useMemo(() => {
-    const existingFingerprints = new Set(
-      (stmtSrc === "checking" ? checkTxns : ccTxns)
-        .map(t => buildTxnFingerprint(t, selectedYear))
-        .filter(Boolean)
-    );
-    const reviewFingerprints = reviewed.map(t => buildTxnFingerprint({ ...t, month, year: selectedYear }, selectedYear));
-    const fingerprintCounts = new Map();
-    reviewFingerprints.forEach(key => {
-      if (!key) return;
-      fingerprintCounts.set(key, (fingerprintCounts.get(key) || 0) + 1);
+    const prepare = txn => {
+      const year = deriveTxnYear(txn, selectedYear);
+      const date = fingerprintTxnDate(txn?.date);
+      const amount = Number(txn?.amount);
+      return {
+        year,
+        date,
+        amountCents: Number.isFinite(amount) ? Math.round(amount * 100) : null,
+        exactKey: buildTxnFingerprint(txn, selectedYear),
+        merchant: buildMerchantSignature(txn?.desc),
+      };
+    };
+    const existingPrepared = (stmtSrc === "checking" ? checkTxns : ccTxns)
+      .map(t => prepare(t))
+      .filter(t => t.date && Number.isFinite(t.amountCents) && Number.isFinite(t.year));
+    const reviewPrepared = reviewed.map(t => prepare({ ...t, month, year: selectedYear }));
+    const exactCounts = new Map();
+    reviewPrepared.forEach(item => {
+      if (!item.exactKey) return;
+      exactCounts.set(item.exactKey, (exactCounts.get(item.exactKey) || 0) + 1);
     });
-    return reviewFingerprints.map(key => {
-      const matchesExisting = !!key && existingFingerprints.has(key);
-      const repeatsInImport = !!key && (fingerprintCounts.get(key) || 0) > 1;
+    return reviewPrepared.map((item, idx) => {
+      const sameSlotExisting = existingPrepared.filter(other =>
+        other.year === item.year && other.date === item.date && other.amountCents === item.amountCents
+      );
+      const matchesExisting = !!item.exactKey && sameSlotExisting.some(other => other.exactKey === item.exactKey);
+      const possibleExisting = !matchesExisting && sameSlotExisting.some(other => merchantSimilarity(item.merchant, other.merchant) >= 0.7);
+      const repeatsInImport = !!item.exactKey && (exactCounts.get(item.exactKey) || 0) > 1;
+      const possibleRepeatInImport = !repeatsInImport && reviewPrepared.some((other, otherIdx) =>
+        otherIdx !== idx
+        && other.year === item.year
+        && other.date === item.date
+        && other.amountCents === item.amountCents
+        && merchantSimilarity(item.merchant, other.merchant) >= 0.7
+      );
       return {
         matchesExisting,
+        possibleExisting,
         repeatsInImport,
-        flagged: matchesExisting || repeatsInImport,
+        possibleRepeatInImport,
+        flagged: matchesExisting || possibleExisting || repeatsInImport || possibleRepeatInImport,
       };
     });
   }, [stmtSrc, checkTxns, ccTxns, reviewed, month, selectedYear]);
 
   const duplicateCount = duplicateRows.filter(r => r.flagged).length;
-  const existingDuplicateCount = duplicateRows.filter(r => r.matchesExisting).length;
-  const importDuplicateCount = duplicateRows.filter(r => r.repeatsInImport).length;
+  const existingDuplicateCount = duplicateRows.filter(r => r.matchesExisting || r.possibleExisting).length;
+  const importDuplicateCount = duplicateRows.filter(r => r.repeatsInImport || r.possibleRepeatInImport).length;
   const selectedDuplicateCount = duplicateRows.reduce((sum, r, idx) => sum + (r.flagged && reviewed[idx]?._include ? 1 : 0), 0);
-  const selectedExistingDuplicateCount = duplicateRows.reduce((sum, r, idx) => sum + (r.matchesExisting && reviewed[idx]?._include ? 1 : 0), 0);
-  const selectedImportDuplicateCount = duplicateRows.reduce((sum, r, idx) => sum + (r.repeatsInImport && reviewed[idx]?._include ? 1 : 0), 0);
+  const selectedExistingDuplicateCount = duplicateRows.reduce((sum, r, idx) => sum + ((r.matchesExisting || r.possibleExisting) && reviewed[idx]?._include ? 1 : 0), 0);
+  const selectedImportDuplicateCount = duplicateRows.reduce((sum, r, idx) => sum + ((r.repeatsInImport || r.possibleRepeatInImport) && reviewed[idx]?._include ? 1 : 0), 0);
 
   const excludeFlaggedDuplicates = () => {
     setReviewed(prev => prev.map((t, idx) => duplicateRows[idx]?.flagged ? { ...t, _include: false } : t));
@@ -5910,7 +5965,7 @@ Do NOT include a "cat" field.`;
                 <div>
                   <div style={{fontSize:14,fontWeight:800,color:"#fbbf24"}}>Possible duplicates found</div>
                   <div style={{fontSize:12,color:"#fde68a",marginTop:4}}>
-                    {duplicateCount} row{duplicateCount === 1 ? "" : "s"} matched the duplicate check. {selectedDuplicateCount} {selectedDuplicateCount === 1 ? "is" : "are"} still selected.
+                    {duplicateCount} row{duplicateCount === 1 ? "" : "s"} matched the duplicate check exactly or approximately. {selectedDuplicateCount} {selectedDuplicateCount === 1 ? "is" : "are"} still selected.
                   </div>
                   <div style={{fontSize:11,color:"#fcd34d",marginTop:6}}>
                     {existingDuplicateCount} match existing {stmtSrc === "checking" ? "checking" : "credit card"} transactions in {selectedYear}. {importDuplicateCount} repeat inside this import file.
@@ -5973,9 +6028,11 @@ Do NOT include a "cat" field.`;
                             {t.desc}
                           </div>
                           <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:4}}>
-                            {t._localMatch && <span style={{fontSize:9,fontWeight:700,background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e33",borderRadius:4,padding:"1px 4px"}}>✓ known</span>}
+                            {t._localMatch && <span style={{fontSize:9,fontWeight:700,background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e33",borderRadius:4,padding:"1px 4px"}}>{t._localMatchPossible ? "≈ likely match" : "✓ known"}</span>}
                             {duplicateInfo.matchesExisting && <span style={{fontSize:9,fontWeight:700,background:"#f59e0b22",color:"#fbbf24",border:"1px solid #f59e0b33",borderRadius:4,padding:"1px 4px"}}>⚠ matches existing</span>}
+                            {duplicateInfo.possibleExisting && <span style={{fontSize:9,fontWeight:700,background:"#facc1522",color:"#facc15",border:"1px solid #facc1533",borderRadius:4,padding:"1px 4px"}}>≈ possible duplicate</span>}
                             {duplicateInfo.repeatsInImport && <span style={{fontSize:9,fontWeight:700,background:"#fb923c22",color:"#fdba74",border:"1px solid #fb923c33",borderRadius:4,padding:"1px 4px"}}>↺ repeated in file</span>}
+                            {duplicateInfo.possibleRepeatInImport && <span style={{fontSize:9,fontWeight:700,background:"#fb923c22",color:"#fdba74",border:"1px solid #fb923c33",borderRadius:4,padding:"1px 4px"}}>≈ possible repeat</span>}
                           </div>
                         </div>
                     }
@@ -6067,7 +6124,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.13";
+const APP_VERSION = "0.1.14";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
@@ -6112,6 +6169,78 @@ function deriveTxnYear(t, fallbackYear = null) {
   if (Number.isFinite(fromDate) && fromDate > 1900 && fromDate < 3000) return fromDate;
   return fallbackYear;
 }
+const MERCHANT_NOISE_PATTERNS = [
+  /\bpoint of sale withdrawal\b/g,
+  /\bpoint of sale\b/g,
+  /\bach payment\b/g,
+  /\bach deposit\b/g,
+  /\bdeposit internet transfer from\b/g,
+  /\bdeposit internet transfer to\b/g,
+  /\binternet transfer from\b/g,
+  /\binternet transfer to\b/g,
+  /\bpayment\b/g,
+  /\bdeposit\b/g,
+  /\bwithdrawal\b/g,
+  /\bpurchase authorization\b/g,
+  /\brecurring debit card purchase\b/g,
+  /\bdebit card purchase\b/g,
+  /\bonline transfer from\b/g,
+  /\bonline transfer to\b/g,
+];
+const MERCHANT_DROP_WORDS = new Set([
+  "ach", "point", "sale", "withdrawal", "deposit", "internet", "transfer", "from", "to",
+  "payment", "purchase", "card", "debit", "credit", "visa", "direct", "check", "pos",
+  "transaction", "trn", "epay", "online", "recurring", "authorization", "autopay", "bill",
+  "pay", "received", "cashout", "cash", "out", "fee", "fees", "the", "and", "for", "of",
+]);
+function normalizeTxnText(desc) {
+  return (desc || "")
+    .toString()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function buildMerchantSignature(desc) {
+  const normalized = normalizeTxnText(desc);
+  if (!normalized) return { base: "", core: "", joined: "", tokens: [] };
+  let stripped = normalized;
+  MERCHANT_NOISE_PATTERNS.forEach(pattern => { stripped = stripped.replace(pattern, " "); });
+  stripped = stripped.replace(/\s+/g, " ").trim();
+  const baseTokens = stripped.split(" ").filter(Boolean);
+  const tokens = baseTokens.filter(token =>
+    token.length > 1
+    && !MERCHANT_DROP_WORDS.has(token)
+    && !/^\d+$/.test(token)
+    && !/^[a-z]{2,4}us$/.test(token)
+  );
+  const chosen = tokens.length ? tokens : baseTokens.filter(token => token.length > 1).slice(0, 8);
+  const unique = [];
+  chosen.forEach(token => {
+    if (!unique.includes(token)) unique.push(token);
+  });
+  const core = unique.join(" ").trim();
+  return {
+    base: normalized,
+    core: core || normalized,
+    joined: (core || normalized).replace(/\s+/g, ""),
+    tokens: unique.length ? unique : normalized.split(" ").filter(Boolean).slice(0, 8),
+  };
+}
+function merchantSimilarity(left, right) {
+  const a = typeof left === "string" ? buildMerchantSignature(left) : left;
+  const b = typeof right === "string" ? buildMerchantSignature(right) : right;
+  if (!a?.core || !b?.core) return 0;
+  if (a.core === b.core || a.joined === b.joined) return 1;
+  if (a.core.includes(b.core) || b.core.includes(a.core) || a.joined.includes(b.joined) || b.joined.includes(a.joined)) return 0.93;
+  const aTokens = a.tokens || [];
+  const bTokens = b.tokens || [];
+  if (!aTokens.length || !bTokens.length) return 0;
+  const common = aTokens.filter(token => bTokens.includes(token));
+  const minCover = common.length / Math.min(aTokens.length, bTokens.length);
+  const maxCover = common.length / Math.max(aTokens.length, bTokens.length);
+  return (minCover * 0.75) + (maxCover * 0.25);
+}
 function fingerprintTxnDate(dateStr) {
   const s = (dateStr || "").toString().trim();
   if (!s) return "";
@@ -6122,13 +6251,7 @@ function fingerprintTxnDate(dateStr) {
   return s;
 }
 function fingerprintTxnDesc(desc) {
-  return (desc || "")
-    .toString()
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 48);
+  return buildMerchantSignature(desc).joined.slice(0, 64);
 }
 function buildTxnFingerprint(txn, fallbackYear = null) {
   const date = fingerprintTxnDate(txn?.date);

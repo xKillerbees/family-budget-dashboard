@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.14] - 2026-03-08
+
+### Changed
+- CSV import local category matching now uses merchant-aware fuzzy matching instead of relying on near-exact bank-export text, improving matches for prefixed descriptions such as point-of-sale, ACH, and transfer rows.
+- Import review now distinguishes exact known matches from likely matches and flags both exact and approximate duplicate candidates when date/amount align but merchant text differs.
+
 ## [0.1.13] - 2026-03-08
 
 ### Added
