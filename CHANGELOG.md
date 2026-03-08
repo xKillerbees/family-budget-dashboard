@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.17] - 2026-03-08
+
+### Changed
+- Import is no longer a standalone nav tab; it now opens inline from a `Transactions` page button.
+- Tithe and ABA are no longer top-level pages; they now live as sub-tabs inside `Scenarios`.
+- Income is no longer a top-level page; it now lives as a sub-tab inside `Categories`.
+- The sidebar section heading for `Transactions` and `Settings` was renamed from `Audit / Transactions` to `Manage`.
+
 ## [0.1.16] - 2026-03-08
 
 ### Added

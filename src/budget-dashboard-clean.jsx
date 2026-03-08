@@ -767,8 +767,8 @@ const ITEM_CATS = [
   { label:"Misc",       emoji:"📦", color:"#94a3b8" },
 ];
 
-function Scenarios({ wide, isMobile }) {
-  const { payoffs, normSurplus, takeHome, t2CarryIn, groceryGoal, checkTxns, ccTxns, selectedMonth, showTithe } = useBudget();
+function Scenarios({ wide, isMobile, activeTab: activeTabProp, setActiveTab: setActiveTabProp }) {
+  const { payoffs, normSurplus, takeHome, t2CarryIn, groceryGoal, checkTxns, ccTxns, selectedMonth, showTithe, showABA } = useBudget();
   const t2Balance = t2CarryIn;
 
   const [plans, setPlans] = useState([
@@ -783,7 +783,14 @@ function Scenarios({ wide, isMobile }) {
       ]
     }
   ]);
-  const [activeTab, setActiveTab] = useState("impact"); // "impact" | "planner"
+  const [localActiveTab, setLocalActiveTab] = useState("impact");
+  const activeTab = activeTabProp ?? localActiveTab;
+  const setActiveTab = setActiveTabProp ?? setLocalActiveTab;
+
+  useEffect(() => {
+    if (activeTab === "tithe" && !showTithe) setActiveTab("impact");
+    if (activeTab === "aba" && !showABA) setActiveTab("impact");
+  }, [activeTab, setActiveTab, showTithe, showABA]);
 
   // ── Plan CRUD ──────────────────────────────────────────────────────────────
   const addPlan = () => setPlans(prev => [...prev, {
@@ -895,8 +902,13 @@ function Scenarios({ wide, isMobile }) {
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
 
       {/* Tab switcher */}
-      <div style={{display:"flex",gap:8}}>
-        {[["impact","📊 Budget Impact Waterfall"],["planner","🗓 Trip / Event Planner"]].map(([t,l])=>(
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {[
+          ["impact","📊 Budget Impact"],
+          ["planner","🗓 Trip / Event Planner"],
+          ...(showTithe ? [["tithe","🙏 Tithe"]] : []),
+          ...(showABA ? [["aba","🧩 ABA"]] : []),
+        ].map(([t,l])=>(
           <button key={t} onClick={()=>setActiveTab(t)} style={{
             padding:"9px 18px",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",
             background:activeTab===t?ACCENT+"22":BG,color:activeTab===t?ACCENT:MUTED,
@@ -1153,6 +1165,14 @@ function Scenarios({ wide, isMobile }) {
             </div>
           </Card>
         </>
+      )}
+
+      {activeTab==="tithe" && showTithe && (
+        <TitheTracker wide={wide} isMobile={isMobile}/>
+      )}
+
+      {activeTab==="aba" && showABA && (
+        <ABAPlanner wide={wide}/>
       )}
     </div>
   );
@@ -1654,8 +1674,11 @@ function Payoffs({wide}) {
 }
 
 // ── CATEGORIES (universal category drill-down, replaces dedicated Groceries tab) ──
-function Categories({wide, isMobile}) {
+function Categories({wide, isMobile, activeTab: activeTabProp, setActiveTab: setActiveTabProp}) {
   const { summaryRows, selectedMonth, checkTxns, ccTxns, groceryGoal, setGroceryGoal } = useBudget();
+  const [localActiveTab, setLocalActiveTab] = useState("spending");
+  const activeTab = activeTabProp ?? localActiveTab;
+  const setActiveTab = setActiveTabProp ?? setLocalActiveTab;
   const [selectedCat, setSelectedCat] = useState("Groceries");
   const [selectedVendors, setSelectedVendors] = useState([]);
   const [expandedVendor, setExpandedVendor] = useState(null);
@@ -1715,6 +1738,18 @@ function Categories({wide, isMobile}) {
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {[["spending","📂 Spending Categories"],["income","💵 Income"]].map(([tab,label]) => (
+          <button key={tab} onClick={() => setActiveTab(tab)} style={{
+            padding:"9px 18px",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",
+            background:activeTab===tab?ACCENT+"22":BG,color:activeTab===tab?ACCENT:MUTED,
+            border:`1px solid ${activeTab===tab?ACCENT:BORDER}`,transition:"all .15s",
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {activeTab === "income" ? <IncomePage wide={wide}/> : (
+        <>
       {/* Category selector pill row */}
       <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
         {summaryRows.map(r => {
@@ -1736,7 +1771,7 @@ function Categories({wide, isMobile}) {
         <div style={{padding:"40px 24px",textAlign:"center",color:MUTED,background:SURFACE,borderRadius:18,border:`1px solid ${BORDER}`}}>
           <div style={{fontSize:40,marginBottom:12}}>{catRow ? catRow.icon : "📂"}</div>
           <div style={{fontSize:18,fontWeight:700,color:TEXT,marginBottom:8}}>No {cat} transactions yet</div>
-          <div style={{fontSize:14}}>Import a statement on the <strong style={{color:ACCENT}}>📥 Import</strong> tab — transactions categorized as <strong>{cat}</strong> will appear here automatically.</div>
+          <div style={{fontSize:14}}>Import a statement from <strong style={{color:ACCENT}}>Transactions</strong> using <strong style={{color:ACCENT}}>📥 Import Statement</strong> — transactions categorized as <strong>{cat}</strong> will appear here automatically.</div>
         </div>
       ) : (
         <>
@@ -1905,6 +1940,8 @@ function Categories({wide, isMobile}) {
               <span style={{fontSize:16,fontWeight:900,color,fontVariantNumeric:"tabular-nums"}}>{fmt(total)}</span>
             </div>
           </Card>
+        </>
+      )}
         </>
       )}
     </div>
@@ -2673,31 +2710,44 @@ function TxnTable({ src, isMobile }) {
 
 // ── RECOMMENDATIONS ───────────────────────────────────────────────────────────
 
-function TransactionsPage({ isMobile }) {
+function TransactionsPage({ wide, isMobile }) {
   const [source, setSource] = useState("checking");
+  const [showImport, setShowImport] = useState(false);
   return (
     <div style={{display:"flex",flexDirection:"column",gap:12}}>
       <Card>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
           <Label>Transactions</Label>
-          <div style={{display:"inline-flex",gap:6,padding:4,borderRadius:12,background:BG,border:`1px solid ${BORDER}`}}>
-            <button onClick={()=>setSource("checking")} style={{
-              padding:"8px 14px",borderRadius:9,fontSize:13,fontWeight:800,cursor:"pointer",
-              background:source==="checking"?ACCENT+"22":"transparent",color:source==="checking"?ACCENT:MUTED,
-              border:`1px solid ${source==="checking"?ACCENT:BORDER}`,transition:"all .15s",boxShadow:source==="checking"?"inset 0 0 0 1px "+ACCENT+"55":"none"
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
+            <div style={{display:"inline-flex",gap:6,padding:4,borderRadius:12,background:BG,border:`1px solid ${BORDER}`}}>
+              <button onClick={()=>setSource("checking")} style={{
+                padding:"8px 14px",borderRadius:9,fontSize:13,fontWeight:800,cursor:"pointer",
+                background:source==="checking"?ACCENT+"22":"transparent",color:source==="checking"?ACCENT:MUTED,
+                border:`1px solid ${source==="checking"?ACCENT:BORDER}`,transition:"all .15s",boxShadow:source==="checking"?"inset 0 0 0 1px "+ACCENT+"55":"none"
+              }}>
+                🏦 Checking
+              </button>
+              <button onClick={()=>setSource("cc")} style={{
+                padding:"8px 14px",borderRadius:9,fontSize:13,fontWeight:800,cursor:"pointer",
+                background:source==="cc"?ACCENT+"22":"transparent",color:source==="cc"?ACCENT:MUTED,
+                border:`1px solid ${source==="cc"?ACCENT:BORDER}`,transition:"all .15s",boxShadow:source==="cc"?"inset 0 0 0 1px "+ACCENT+"55":"none"
+              }}>
+                💳 Credit Card
+              </button>
+            </div>
+            <button onClick={() => setShowImport(v => !v)} style={{
+              padding:"8px 14px",borderRadius:10,fontSize:13,fontWeight:800,cursor:"pointer",
+              background:showImport ? "#06b6d422" : "#22c55e22",
+              color:showImport ? "#06b6d4" : "#22c55e",
+              border:`1px solid ${showImport ? "#06b6d455" : "#22c55e55"}`,
+              transition:"all .15s",
             }}>
-              🏦 Checking
-            </button>
-            <button onClick={()=>setSource("cc")} style={{
-              padding:"8px 14px",borderRadius:9,fontSize:13,fontWeight:800,cursor:"pointer",
-              background:source==="cc"?ACCENT+"22":"transparent",color:source==="cc"?ACCENT:MUTED,
-              border:`1px solid ${source==="cc"?ACCENT:BORDER}`,transition:"all .15s",boxShadow:source==="cc"?"inset 0 0 0 1px "+ACCENT+"55":"none"
-            }}>
-              💳 Credit Card
+              {showImport ? "✕ Hide Import" : "📥 Import Statement"}
             </button>
           </div>
         </div>
       </Card>
+      {showImport && <StatementImporter wide={wide} isMobile={isMobile}/>}
       <TxnTable src={source} isMobile={isMobile}/>
     </div>
   );
@@ -4774,10 +4824,10 @@ function Settings({ isMobile }) {
       {/* Feature Toggles */}
       <Card glow="#7c6af7" style={{marginTop:16}}>
         <Label>🔀 Feature Toggles</Label>
-        <div style={{fontSize:12,color:MUTED,marginBottom:14}}>Hide tabs and categories you don't need. Data for hidden categories is still tracked — it just won't appear in the nav or summary.</div>
+        <div style={{fontSize:12,color:MUTED,marginBottom:14}}>Hide tabs, sub-tabs, and categories you don't need. Data for hidden categories is still tracked — it just won't appear in the relevant views.</div>
         {[
-          { key:"tithe", label:"Tithe Tracker", emoji:"🙏", desc:"Giving & Tithe category + Tithe tab", val:showTithe, set:setShowTithe },
-          { key:"aba",   label:"ABA Planner",   emoji:"🧩", desc:"ABA Therapy category + ABA tab",   val:showABA,   set:setShowABA   },
+          { key:"tithe", label:"Tithe Tracker", emoji:"🙏", desc:"Giving & Tithe category + Scenarios sub-tab", val:showTithe, set:setShowTithe },
+          { key:"aba",   label:"ABA Planner",   emoji:"🧩", desc:"ABA Therapy category + Scenarios sub-tab",   val:showABA,   set:setShowABA   },
           { key:"hideZeroSummary", label:"Hide $0 Summary Rows", emoji:"📉", desc:"Hide zero-amount categories in Summary breakdown", val:hideZeroSummaryCats, set:setHideZeroSummaryCats },
           { key:"mobileTxnActionMenu", label:"Compact Mobile Txn Actions", emoji:"📱", desc:"Show one Options button on mobile transaction rows", val:mobileTxnActionMenu, set:setMobileTxnActionMenu },
         ].map(f => (
@@ -4887,7 +4937,7 @@ function Settings({ isMobile }) {
       {showABA && (
       <Card glow="#8b5cf6" style={{marginTop:16}}>
         <Label>🧩 ABA Therapy Settings</Label>
-        <div style={{fontSize:12,color:MUTED,marginBottom:14}}>Customize cost calculations used in the ABA Planner tab.</div>
+        <div style={{fontSize:12,color:MUTED,marginBottom:14}}>Customize cost calculations used in the Scenarios → ABA tab.</div>
         {[
           { key:"costPerVisit", label:"Cost per visit ($)", min:1,   step:5   },
           { key:"oopCap",       label:"Annual out-of-pocket cap ($)", min:100, step:100 },
@@ -6271,21 +6321,17 @@ Do NOT include a "cat" field.`;
 const NAV = [
   { id:"summary",      label:"Summary",      emoji:"\u{1F4CB}" },
   { id:"recs",         label:"Tips",         emoji:"\u{1F4A1}" },
-  { id:"tithe",        label:"Tithe",        emoji:"\u{1F64F}" },
   { id:"payoffs",      label:"Payoffs",      emoji:"\u{1F4B3}" },
   { id:"scenarios",    label:"Scenarios",    emoji:"\u{1F4C8}" },
-  { id:"aba",          label:"ABA",          emoji:"\u{1F9E9}" },
   { id:"categories",   label:"Categories",   emoji:"\u{1F4C2}" },
   { id:"trends",       label:"Trends",       emoji:"\u{1F4CA}" },
-  { id:"income",       label:"Income",       emoji:"\u{1F4B5}" },
   { id:"meals",        label:"Meals",        emoji:"\u{1F37D}\u{FE0F}" },
-  { id:"import",       label:"Import",       emoji:"\u{1F4E5}" },
   { id:"transactions", label:"Transactions", emoji:"\u{1F9FE}" },
   { id:"settings",     label:"Settings",     emoji:"\u{2699}\u{FE0F}" },
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.16";
+const APP_VERSION = "0.1.17";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
@@ -6665,6 +6711,8 @@ function hasDuplicateTxnIds(txns = []) {
 // ── APP ───────────────────────────────────────────────────────────────────────
 export default function BudgetDashboardClean() {
   const [page, setPage] = useState("summary");
+  const [scenariosTab, setScenariosTab] = useState("impact");
+  const [categoriesTab, setCategoriesTab] = useState("spending");
   const width    = useWindowWidth();
   const isMobile = width < 768;
   const wide     = width >= 1000;
@@ -6812,7 +6860,22 @@ export default function BudgetDashboardClean() {
   useEffect(() => {
     if (!showTithe && page === "tithe") setPage("summary");
     if (!showABA   && page === "aba")   setPage("summary");
-  }, [showTithe, showABA, page]);
+    if (!showTithe && scenariosTab === "tithe") setScenariosTab("impact");
+    if (!showABA   && scenariosTab === "aba")   setScenariosTab("impact");
+    if (page === "tithe" && showTithe) {
+      if (scenariosTab !== "tithe") setScenariosTab("tithe");
+      setPage("scenarios");
+    }
+    if (page === "aba" && showABA) {
+      if (scenariosTab !== "aba") setScenariosTab("aba");
+      setPage("scenarios");
+    }
+    if (page === "income") {
+      if (categoriesTab !== "income") setCategoriesTab("income");
+      setPage("categories");
+    }
+    if (page === "import") setPage("transactions");
+  }, [showTithe, showABA, page, scenariosTab, categoriesTab]);
 
   const updateTxnCat = useCallback((src, id, newCat) => {
     if (src === "checking") setCheckTxns(prev => prev.map(t => t.id === id ? { ...t, cat: newCat } : t));
@@ -7014,27 +7077,31 @@ export default function BudgetDashboardClean() {
     retargetCat,
   };
 
+  const activePageId = page === "tithe" || page === "aba"
+    ? "scenarios"
+    : page === "income"
+      ? "categories"
+      : page;
+  const effectiveScenariosTab = page === "tithe"
+    ? "tithe"
+    : page === "aba"
+      ? "aba"
+      : scenariosTab;
+  const effectiveCategoriesTab = page === "income" ? "income" : categoriesTab;
+
   const pages = {
     summary:   <Summary        {...props}/>,
     recs:      <Recommendations {...props}/>,
-    tithe:     <TitheTracker   {...props}/>,
-    scenarios: <Scenarios      {...props}/>,
-    aba:       <ABAPlanner     {...props}/>,
+    scenarios: <Scenarios      {...props} activeTab={effectiveScenariosTab} setActiveTab={setScenariosTab}/>,
     payoffs:   <Payoffs        {...props}/>,
-    categories: <Categories    {...props}/>,
+    categories: <Categories    {...props} activeTab={effectiveCategoriesTab} setActiveTab={setCategoriesTab}/>,
     trends:    <Trends          {...props}/>,
-    income:    <IncomePage      {...props}/>,
     meals:     <MealPlanningPage {...props}/>,
-    import:    <StatementImporter {...props}/>,
-    transactions:  <TransactionsPage isMobile={isMobile}/>,
+    transactions:  <TransactionsPage {...props}/>,
     settings:  <Settings isMobile={isMobile}/>,
   };
 
-  const visibleNav = NAV.filter(n => {
-    if (n.id === "tithe" && !showTithe) return false;
-    if (n.id === "aba"   && !showABA)   return false;
-    return true;
-  });
+  const visibleNav = NAV;
   const auditStart    = visibleNav.findIndex(n => n.id === "transactions");
   const dashboardNav  = visibleNav.slice(0, auditStart);
   const auditNav      = visibleNav.slice(auditStart);
@@ -7091,7 +7158,7 @@ export default function BudgetDashboardClean() {
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",paddingLeft:14,paddingRight:14,marginBottom:8}}>
               <div>
                 <div style={{fontSize:17,fontWeight:900,color:ACCENT,lineHeight:1}}>{dashName}</div>
-                <div style={{fontSize:11,color:MUTED,marginTop:2}}>{selectedMonth} {selectedYear} · {visibleNav.find(n=>n.id===page)?.label}</div>
+                <div style={{fontSize:11,color:MUTED,marginTop:2}}>{selectedMonth} {selectedYear} · {visibleNav.find(n=>n.id===activePageId)?.label}</div>
               </div>
               {/* Compact gap badge */}
               <div style={{background:planBadgeColor+"22",border:`1px solid ${planBadgeColor}44`,borderRadius:10,padding:"5px 10px",textAlign:"center",flexShrink:0}}>
@@ -7128,7 +7195,7 @@ export default function BudgetDashboardClean() {
             </div>
           </div>
           <div style={{padding:"16px 14px 120px",flex:1}}>
-            {pages[page]}
+            {pages[activePageId]}
             <div style={{marginTop:18,textAlign:"center"}}>
               <a href={REPO_URL} target="_blank" rel="noreferrer" style={{fontSize:11,color:DIM,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
                 <span aria-hidden="true">🐙</span>
@@ -7138,7 +7205,7 @@ export default function BudgetDashboardClean() {
           </div>
           <div style={{position:"fixed",bottom:0,left:0,right:0,background:SURFACE+"f8",backdropFilter:"blur(24px)",borderTop:`1px solid ${BORDER}`,zIndex:100,paddingBottom:"max(env(safe-area-inset-bottom,0px),8px)"}}>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${mobileRow1.length},1fr)`, borderBottom: `1px solid ${BORDER}` }}>
-            {mobileRow1.map(n => { const a = page===n.id; return (
+            {mobileRow1.map(n => { const a = activePageId===n.id; return (
               <button key={n.id} onClick={() => setPage(n.id)} style={{ padding:"9px 4px 7px", background:"transparent", display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
                 <span style={{ fontSize:16, opacity:a?1:.35 }}>{n.emoji}</span>
                 <span style={{ fontSize:8, fontWeight:a?800:500, color:a?ACCENT:MUTED }}>{n.label}</span>
@@ -7147,7 +7214,7 @@ export default function BudgetDashboardClean() {
             ); })}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${mobileRow2.length},1fr)` }}>
-            {mobileRow2.map(n => { const a = page===n.id; return (
+            {mobileRow2.map(n => { const a = activePageId===n.id; return (
               <button key={n.id} onClick={() => setPage(n.id)} style={{ padding:"9px 4px 7px", background:"transparent", display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
                 <span style={{ fontSize:20, opacity:a?1:.35 }}>{n.emoji}</span>
                 <span style={{ fontSize:9, fontWeight:a?800:500, color:a?ACCENT:MUTED, textAlign:"center", lineHeight:1.2 }}>{n.label}</span>
@@ -7189,13 +7256,13 @@ export default function BudgetDashboardClean() {
             </div>
             <nav style={{padding:"12px 0"}}>
               <div style={{padding:"16px 20px 6px",fontSize:10,fontWeight:700,color:DIM,textTransform:"uppercase",letterSpacing:".6px"}}>Dashboard</div>
-              {dashboardNav.map(n=>{const a=page===n.id;return(
+              {dashboardNav.map(n=>{const a=activePageId===n.id;return(
                 <button key={n.id} onClick={()=>setPage(n.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"10px 20px",background:a?ACCENT+"12":"transparent",borderLeft:`3px solid ${a?ACCENT:"transparent"}`,color:a?ACCENT:MUTED,fontSize:14,fontWeight:a?700:400,transition:"all .15s",textAlign:"left"}}>
                   <span style={{fontSize:17}}>{n.emoji}</span>{n.label}
                 </button>
               );})}
-              <div style={{padding:"16px 20px 6px",fontSize:10,fontWeight:700,color:DIM,textTransform:"uppercase",letterSpacing:".6px"}}>Audit / Transactions</div>
-              {auditNav.map(n=>{const a=page===n.id;return(
+              <div style={{padding:"16px 20px 6px",fontSize:10,fontWeight:700,color:DIM,textTransform:"uppercase",letterSpacing:".6px"}}>Manage</div>
+              {auditNav.map(n=>{const a=activePageId===n.id;return(
                 <button key={n.id} onClick={()=>setPage(n.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"10px 20px",background:a?ACCENT+"12":"transparent",borderLeft:`3px solid ${a?ACCENT:"transparent"}`,color:a?ACCENT:MUTED,fontSize:14,fontWeight:a?700:400,transition:"all .15s",textAlign:"left"}}>
                   <span style={{fontSize:17}}>{n.emoji}</span>{n.label}
                 </button>
@@ -7230,8 +7297,8 @@ export default function BudgetDashboardClean() {
           <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",height:"100vh",overflowY:"auto"}}>
             <div style={{borderBottom:`1px solid ${BORDER}`,padding:"16px 32px",display:"flex",alignItems:"center",justifyContent:"space-between",background:BG+"cc",backdropFilter:"blur(12px)",position:"sticky",top:0,zIndex:10}}>
               <div>
-                <div style={{fontSize:22,fontWeight:800,color:TEXT}}>
-                  {visibleNav.find(n=>n.id===page)?.label}
+                  <div style={{fontSize:22,fontWeight:800,color:TEXT}}>
+                  {visibleNav.find(n=>n.id===activePageId)?.label}
                 </div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
                   <Tag color={normSurplus>=0 ? "#22c55e" : "#f59e0b"}>
@@ -7247,7 +7314,7 @@ export default function BudgetDashboardClean() {
               </div>
               {gapBadge}
             </div>
-            <div style={{padding:"28px 32px"}}>{pages[page]}</div>
+            <div style={{padding:"28px 32px"}}>{pages[activePageId]}</div>
           </div>
         </div>
       )}
