@@ -5040,6 +5040,7 @@ function StatementImporter({ wide, isMobile }) {
   const [editingIdx, setEditingIdx] = useState(null);
   const [aiRanOnCsv, setAiRanOnCsv] = useState(false);
   const [runningAI, setRunningAI] = useState(false);
+  const [localCsvFailed, setLocalCsvFailed] = useState(false);
   const [localPdfFailed, setLocalPdfFailed] = useState(false);
   const [parsingMode, setParsingMode] = useState("local");
 
@@ -5047,12 +5048,20 @@ function StatementImporter({ wide, isMobile }) {
   const splitCSVLine = (line, delim) => {
     const result = []; let field = ""; let inQ = false;
     for (let i = 0; i < line.length; i++) {
-      if (line[i] === '"') { inQ = !inQ; }
-      else if (line[i] === delim && !inQ) { result.push(field.trim()); field = ""; }
-      else { field += line[i]; }
+      const ch = line[i];
+      const next = line[i + 1];
+      const afterNext = line[i + 2];
+      if (ch === '"' && inQ && next === '"') { field += '"'; i++; continue; }
+      if (ch === "\\" && inQ && next === '"') {
+        if (afterNext === delim || afterNext === undefined) { inQ = false; i++; continue; }
+        field += '"'; i++; continue;
+      }
+      if (ch === '"') { inQ = !inQ; }
+      else if (ch === delim && !inQ) { result.push(field.trim()); field = ""; }
+      else { field += ch; }
     }
     result.push(field.trim());
-    return result.map(f => f.replace(/^"|"$/g, ""));
+    return result.map(f => f.replace(/^"|"$/g, "").trim());
   };
   const parseCSVDate = raw => {
     if (!raw) return null;
@@ -5063,51 +5072,211 @@ function StatementImporter({ wide, isMobile }) {
     if (m) return `${m[2].padStart(2,"0")}/${m[3].padStart(2,"0")}`;
     return null;
   };
-  const parseCSVData = text => {
-    const lines = text.split(/\r?\n/).filter(l => l.trim());
-    if (lines.length < 2) return [];
-    const delim = [",", "\t", ";"].reduce((best, d) => {
-      const n = (lines[0].match(new RegExp(d === "." ? "\\." : d, "g")) || []).length;
-      return n > best.n ? { d, n } : best;
-    }, { d: ",", n: 0 }).d;
-    const headers = splitCSVLine(lines[0], delim).map(h => h.toLowerCase().replace(/[^a-z]/g, ""));
-    const hasHeaders = headers.some(h => h.includes("date") || h.includes("desc") || h.includes("amount"));
-    const dataStart = hasHeaders ? 1 : 0;
-    const idx = {
-      date: headers.findIndex(h => h.includes("date") || h.includes("posted") || h === "trans"),
-      desc: headers.findIndex(h => ["description","desc","name","merchant","payee","memo","detail","narration"].some(k => h.includes(k))),
-      amt:  headers.findIndex(h => h === "amount" || h === "amt"),
-      deb:  headers.findIndex(h => h.includes("debit") || h.includes("withdrawal") || h.includes("charge")),
-      cred: headers.findIndex(h => h.includes("credit") || h.includes("deposit")),
+  const normalizeCSVHeader = raw => (raw || "").toLowerCase().replace(/[^a-z]/g, "");
+  const cleanCSVNumber = raw => {
+    const s = (raw || "").toString().trim().replace(/^"|"$/g, "");
+    if (!s) return NaN;
+    const n = parseFloat(s.replace(/[$,\s]/g, "").replace(/^\((.+)\)$/, "-$1"));
+    return Number.isFinite(n) ? n : NaN;
+  };
+  const detectCSVDelimiters = lines => {
+    return [",", "\t", ";", "|"]
+      .map(d => {
+        const counts = lines.slice(0, 12).map(line => splitCSVLine(line, d).length);
+        const multi = counts.filter(n => n > 1);
+        const avg = multi.length ? multi.reduce((sum, n) => sum + n, 0) / multi.length : 0;
+        return { d, score: multi.length * 5 + avg };
+      })
+      .sort((a, b) => b.score - a.score)
+      .map(x => x.d);
+  };
+  const csvDelimLabel = delim => {
+    if (delim === ",") return "comma-delimited";
+    if (delim === "\t") return "tab-delimited";
+    if (delim === ";") return "semicolon-delimited";
+    if (delim === "|") return "pipe-delimited";
+    return "unknown-delimited";
+  };
+  const findCSVHeaderRow = (lines, delim) => {
+    let best = { idx: -1, score: 0, headers: [] };
+    lines.slice(0, Math.min(lines.length, 12)).forEach((line, idx) => {
+      const cols = splitCSVLine(line, delim);
+      if (cols.length < 3) return;
+      const headers = cols.map(normalizeCSVHeader);
+      const score = headers.reduce((sum, h) => {
+        if (!h) return sum;
+        if (h.includes("date") || h.includes("posted")) sum += 4;
+        if (["description","desc","merchant","payee","memo","detail","narration","name"].some(k => h.includes(k))) sum += 3;
+        if (h.includes("amount")) sum += 4;
+        if (h.includes("debit") || h.includes("withdrawal") || h.includes("charge")) sum += 4;
+        if (h.includes("credit") || h.includes("deposit")) sum += 4;
+        if (h.includes("balance")) sum += 1;
+        if (h.includes("transactionnumber") || h.includes("checknumber") || h.includes("accountnumber")) sum += 1;
+        return sum;
+      }, 0);
+      if (score > best.score) best = { idx, score, headers };
+    });
+    return best.score >= 6 ? best : { idx: -1, score: 0, headers: [] };
+  };
+  const buildCSVIndexes = headers => ({
+    date: headers.findIndex(h => h.includes("date") || h.includes("posted")),
+    desc: headers.findIndex(h => ["description","desc","merchant","payee","narration","detail","name"].some(k => h.includes(k))),
+    memo: headers.findIndex(h => h.includes("memo") || h.includes("note")),
+    amt: headers.findIndex(h => h === "amount" || h === "amt" || h === "transactionamount"),
+    deb: headers.findIndex(h => h.includes("debit") || h.includes("withdrawal") || h.includes("charge")),
+    cred: headers.findIndex(h => h.includes("credit") || h.includes("deposit")),
+  });
+  const inferCSVIndexes = rows => {
+    const width = rows.reduce((max, cols) => Math.max(max, cols.length), 0);
+    const stats = Array.from({ length: width }, (_, i) => {
+      const cells = rows.map(cols => (cols[i] || "").trim()).filter(Boolean);
+      return {
+        i,
+        filled: cells.length,
+        dateHits: cells.filter(c => !!parseCSVDate(c)).length,
+        decimalHits: cells.filter(c => /[.,]\d{2}\)?$/.test(c)).length,
+        textHits: cells.filter(c => !parseCSVDate(c) && !Number.isFinite(cleanCSVNumber(c))).length,
+      };
+    });
+    const date = stats.filter(s => s.dateHits > 0).sort((a, b) => b.dateHits - a.dateHits || a.i - b.i)[0]?.i ?? -1;
+    const moneyCols = stats.filter(s => s.i !== date && s.decimalHits > 0).sort((a, b) => a.i - b.i);
+    const likelyBalance = moneyCols.filter(s => s.filled >= Math.max(3, rows.length * 0.7)).sort((a, b) => b.i - a.i)[0]?.i ?? -1;
+    const amountCols = moneyCols.filter(s => s.i !== likelyBalance);
+    const textCols = stats
+      .filter(s => s.i !== date && s.i !== likelyBalance && !amountCols.some(col => col.i === s.i) && s.textHits > 0)
+      .sort((a, b) => a.i - b.i);
+    return {
+      date,
+      desc: textCols[0]?.i ?? -1,
+      memo: textCols[1]?.i ?? -1,
+      amt: amountCols.length === 1 ? amountCols[0].i : -1,
+      deb: amountCols.length >= 2 ? amountCols[0].i : -1,
+      cred: amountCols.length >= 2 ? amountCols[1].i : -1,
     };
-    const cleanNum = s => parseFloat((s || "").replace(/[$,\s]/g, "").replace(/\((.+)\)/, "-$1"));
-    return lines.slice(dataStart).flatMap(line => {
+  };
+  const buildCSVText = (cols, idx) => {
+    const primary = (idx.desc >= 0 ? cols[idx.desc] : "").trim();
+    const secondary = (idx.memo >= 0 ? cols[idx.memo] : "").trim();
+    const pieces = [primary, secondary].filter(Boolean);
+    const desc = pieces.join(" ").replace(/\s+/g, " ").trim();
+    return {
+      desc,
+      note: secondary && secondary.toLowerCase() !== primary.toLowerCase() ? secondary.slice(0, 120) : "",
+      hintText: `${primary} ${secondary}`.trim().toLowerCase(),
+    };
+  };
+  const parseCSVRows = (lines, delim, headerRow = -1) => {
+    const headers = headerRow >= 0 ? splitCSVLine(lines[headerRow], delim).map(normalizeCSVHeader) : [];
+    const startIdx = headerRow >= 0
+      ? headerRow + 1
+      : lines.findIndex(line => {
+          const cols = splitCSVLine(line, delim);
+          return cols.length >= 3 && cols.some(c => !!parseCSVDate(c)) && cols.some(c => Number.isFinite(cleanCSVNumber(c)));
+        });
+    if (startIdx < 0) {
+      return {
+        rows: [],
+        reason: headerRow >= 0
+          ? "A likely header row was found, but no following data row contained both a parseable date and numeric amount."
+          : "No data row contained both a parseable date and numeric amount.",
+      };
+    }
+    const sampleRows = lines
+      .slice(startIdx, startIdx + 12)
+      .map(line => splitCSVLine(line, delim))
+      .filter(cols => cols.length > 1);
+    const idx = headerRow >= 0 ? buildCSVIndexes(headers) : inferCSVIndexes(sampleRows);
+    if (idx.date < 0) return { rows: [], reason: "Could not identify a date column." };
+    if (idx.amt < 0 && idx.deb < 0 && idx.cred < 0) return { rows: [], reason: "Could not identify an amount, debit, or credit column." };
+    if (idx.desc < 0 && idx.memo < 0) return { rows: [], reason: "Could not identify a description or memo column." };
+    const parsed = lines.slice(startIdx).flatMap(line => {
       const cols = splitCSVLine(line, delim);
       if (cols.length < 2) return [];
-      const date = parseCSVDate(cols[idx.date >= 0 ? idx.date : 0]);
+      const date = parseCSVDate(cols[idx.date] || "");
       if (!date) return [];
-      const desc = (cols[idx.desc >= 0 ? idx.desc : 1] || "").trim().slice(0, 60);
+      const { desc, note, hintText } = buildCSVText(cols, idx);
       if (!desc) return [];
-      let amount;
-      if (idx.amt >= 0) { amount = cleanNum(cols[idx.amt]); }
-      else if (idx.deb >= 0 || idx.cred >= 0) {
-        const deb = idx.deb >= 0 ? cleanNum(cols[idx.deb]) : 0;
-        const cred = idx.cred >= 0 ? cleanNum(cols[idx.cred]) : 0;
-        amount = (isNaN(deb) ? 0 : deb) - (isNaN(cred) ? 0 : cred);
+      let amount = NaN;
+      if (idx.deb >= 0 || idx.cred >= 0) {
+        const deb = idx.deb >= 0 ? cleanCSVNumber(cols[idx.deb]) : NaN;
+        const cred = idx.cred >= 0 ? cleanCSVNumber(cols[idx.cred]) : NaN;
+        if (!Number.isFinite(deb) && !Number.isFinite(cred)) return [];
+        amount = (Number.isFinite(deb) ? Math.abs(deb) : 0) - (Number.isFinite(cred) ? Math.abs(cred) : 0);
       } else {
-        for (let j = cols.length - 1; j >= 0; j--) {
-          const n = cleanNum(cols[j]); if (!isNaN(n)) { amount = n; break; }
-        }
+        amount = cleanCSVNumber(cols[idx.amt]);
       }
-      if (amount === undefined || isNaN(amount)) return [];
-      return [{ date, desc, amount, cat: "Snacks/Misc", note: "" }];
+      if (!Number.isFinite(amount)) return [];
+      return [{ date, desc: desc.slice(0, 80), amount, cat: "Snacks/Misc", note, _hintText: hintText }];
     });
+    if (idx.amt >= 0 && idx.deb < 0 && idx.cred < 0) {
+      const creditHint = /\b(deposit|refund|credit|reversal|interest|cashout|cash out|payment received|received|from:)\b/i;
+      const debitHint = /\b(withdrawal|debit|purchase|point of sale|pos|payment|fee|bill pay|autopay|sent|to:|check)\b/i;
+      const flipScore = parsed.reduce((score, txn) => {
+        if (debitHint.test(txn._hintText) && txn.amount < 0) score += 1;
+        if (creditHint.test(txn._hintText) && txn.amount > 0) score += 1;
+        if (debitHint.test(txn._hintText) && txn.amount > 0) score -= 1;
+        if (creditHint.test(txn._hintText) && txn.amount < 0) score -= 1;
+        return score;
+      }, 0);
+      if (flipScore > 1) parsed.forEach(txn => { txn.amount = -txn.amount; });
+    }
+    const rows = parsed.map(({ _hintText, ...txn }) => txn);
+    if (!rows.length) return { rows: [], reason: "Columns were mapped, but no rows produced a valid date and amount pair." };
+    return { rows, reason: "" };
+  };
+  const parseCSVData = text => {
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) {
+      return {
+        rows: [],
+        reason: "The CSV has fewer than two non-empty lines, so there is no usable header/data structure to parse.",
+      };
+    }
+    let best = { rows: [], label: "", reason: "" };
+    const attempts = [];
+    detectCSVDelimiters(lines).forEach(delim => {
+      const headerMatch = findCSVHeaderRow(lines, delim);
+      if (headerMatch.idx >= 0) {
+        const headerAttempt = parseCSVRows(lines, delim, headerMatch.idx);
+        attempts.push({
+          label: `header scan (${csvDelimLabel(delim)})`,
+          rows: headerAttempt.rows,
+          reason: headerAttempt.reason,
+        });
+      } else {
+        attempts.push({
+          label: `header scan (${csvDelimLabel(delim)})`,
+          rows: [],
+          reason: "No usable header row with date/description/amount-like columns was found.",
+        });
+      }
+      const fallbackAttempt = parseCSVRows(lines, delim, -1);
+      attempts.push({
+        label: `statement/export fallback (${csvDelimLabel(delim)})`,
+        rows: fallbackAttempt.rows,
+        reason: fallbackAttempt.reason,
+      });
+    });
+    attempts.forEach(attempt => {
+      if (attempt.rows.length > best.rows.length) best = attempt;
+    });
+    if (best.rows.length) return { rows: best.rows, reason: "", bestAttempt: best.label, attempts };
+    const reasonLines = [...new Set(attempts.map(a => a.reason).filter(Boolean))].slice(0, 3);
+    const why = reasonLines.length ? ` Why: ${reasonLines.join(" ")}` : "";
+    return {
+      rows: [],
+      reason: `Local CSV parse could not confidently detect transactions after header scan and fallback inference.${why} You can continue with AI parse.`,
+      bestAttempt: "",
+      attempts,
+    };
   };
 
   // ── Load file (PDF or CSV) ───────────────────────────────────────────────────
   const loadFile = file => {
     if (!file) return;
     setParseError(null);
+    setAiRanOnCsv(false);
+    setLocalCsvFailed(false);
     setLocalPdfFailed(false);
     if (file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv") {
       setFileName(file.name); setFileType("csv");
@@ -5171,8 +5340,13 @@ function StatementImporter({ wide, isMobile }) {
     setParseError(null);
     try {
       const dict = buildLocalDict();
-      const raw = parseCSVData(csvText);
-      if (raw.length === 0) { setParseError("No transactions found. Check the CSV format."); setStep("upload"); return; }
+      const { rows: raw, reason } = parseCSVData(csvText);
+      if (raw.length === 0) {
+        setLocalCsvFailed(true);
+        setParseError(reason || "Local CSV parse could not confidently detect transactions. You can continue with AI parse.");
+        setStep("upload");
+        return;
+      }
       const withCats = raw.map(t => {
         const localCat = findLocalCat(t.desc, dict);
         return { ...t, cat: localCat || "Snacks/Misc", _localMatch: !!localCat };
@@ -5182,8 +5356,11 @@ function StatementImporter({ wide, isMobile }) {
       setMatchStats({ local: localCount, ai: 0, total: filtered.length, csv: true });
       setParsed(filtered);
       setReviewed(filtered.map(t => ({ ...t, _include: true })));
+      setAiRanOnCsv(false);
+      setLocalCsvFailed(false);
       setStep("review");
     } catch (err) {
+      setLocalCsvFailed(true);
       setParseError("CSV parse failed: " + err.message);
       setStep("upload");
     }
@@ -5256,6 +5433,8 @@ function StatementImporter({ wide, isMobile }) {
       setMatchStats({ local: localCount, ai: 0, total: filtered.length, csv: false });
       setParsed(filtered);
       setReviewed(filtered.map(t => ({ ...t, _include: true })));
+      setAiRanOnCsv(false);
+      setLocalCsvFailed(false);
       setLocalPdfFailed(false);
       setStep("review");
     } catch (err) {
@@ -5265,15 +5444,67 @@ function StatementImporter({ wide, isMobile }) {
     }
   };
 
+  const requestAICategories = async (unmatched, apiKey = ANTHROPIC_API_KEY) => {
+    if (!unmatched.length) return {};
+    const merchantList = unmatched.map(item => `${item.i}: ${item.desc}`).join("\n");
+    const catRules = [
+      "grocery stores, supermarkets, Costco, Walmart food -> Groceries",
+      "restaurants, fast food, cafes -> Dining Out",
+      "mortgage, utilities, electric, gas bill, water, internet, phone, home repair -> Housing",
+      "gas stations fuel, auto insurance, car payment -> Transportation",
+      "Amazon shopping, retail stores, online shopping non-grocery -> Shopping",
+      "Netflix, Hulu, Disney+, Spotify, YouTube, subscriptions -> Subscriptions",
+      "doctors, hospitals, pharmacy, therapy, medical -> Medical",
+      "ABA therapy, Success on Spectrum -> ABA Therapy",
+      "kids activities, school, children stores -> Kids & Family",
+      "loan payments, credit card payments -> Debt Service",
+      "church, tithe, giving -> Giving & Tithe",
+      "gas station snacks, misc small purchases -> Snacks/Misc",
+      "paycheck deposits -> Income",
+      "transfers between own accounts, CC payments -> Transfer"
+    ].join("\n");
+    const catPrompt = [
+      "Categorize each merchant into exactly one of: " + allCats.join(", "),
+      "",
+      "Rules:",
+      catRules,
+      "",
+      "Merchants:",
+      merchantList,
+      "",
+      'Return ONLY a JSON object like: {"0":"Groceries","1":"Housing"}'
+    ].join("\n");
+    const catRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 800,
+        messages: [{ role: "user", content: catPrompt }]
+      })
+    });
+    const catData = await catRes.json();
+    if (catData.error) throw new Error(catData.error.message);
+    return JSON.parse((catData.content?.find(b=>b.type==="text")?.text||"{}").replace(/```json|```/g,"").trim());
+  };
+
   const parseWithAI = async () => {
     if (!ANTHROPIC_API_KEY) { setParseError("Add your Anthropic API key in Settings to enable AI import."); return; }
-    if (!pdfB64) { setParseError("No PDF loaded."); return; }
+    if (fileType === "pdf" && !pdfB64) { setParseError("No PDF loaded."); return; }
+    if (fileType === "csv" && !csvText) { setParseError("No CSV loaded."); return; }
     setStep("parsing");
     setParsingMode("ai");
     setParseError(null);
     try {
-      // ── Call 1: Extract raw transactions (no categorization) ───────────────
-      const extractPrompt = `Parse ALL transactions from this ${stmtSrc === "checking" ? "checking account" : "credit card"} statement for ${month}.
+      const extractPrompt = fileType === "csv"
+        ? `Parse ALL transactions from this ${stmtSrc === "checking" ? "checking account" : "credit card"} CSV export for ${month}.
+The CSV may contain preamble rows, malformed quoting, separate debit/credit columns, or multiple possible layouts.
+Return ONLY a JSON array, no markdown. Each object:
+- "date": "MM/DD"
+- "desc": clean merchant name, max 60 chars
+- "amount": positive for charges/debits, negative for deposits/credits/refunds
+- "note": brief note or ""
+Do NOT include a "cat" field.
+Ignore non-transaction metadata rows and balances.`
+        : `Parse ALL transactions from this ${stmtSrc === "checking" ? "checking account" : "credit card"} statement for ${month}.
 Return ONLY a JSON array, no markdown. Each object:
 - "date": "MM/DD"
 - "desc": clean merchant name, max 40 chars (e.g. "Target", "Costco", "McKeever's Market")
@@ -5281,26 +5512,40 @@ Return ONLY a JSON array, no markdown. Each object:
 - "note": brief note or ""
 Do NOT include a "cat" field.`;
 
+      const messageContent = fileType === "csv"
+        ? `${extractPrompt}\n\nCSV contents:\n${csvText}`
+        : [
+            { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfB64 } },
+            { type: "text", text: extractPrompt },
+          ];
+
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514", max_tokens: 4000,
-          messages: [{ role: "user", content: [
-            { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfB64 } },
-            { type: "text", text: extractPrompt },
-          ]}]
+          messages: [{ role: "user", content: messageContent }]
         })
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
       const rawTxns = JSON.parse((data.content.find(b => b.type === "text")?.text || "").replace(/```json|```/g,"").trim());
       if (!Array.isArray(rawTxns)) throw new Error("Extraction failed");
+      const normalizedRaw = rawTxns
+        .filter(t => t && typeof t === "object")
+        .map(t => ({
+          date: parseCSVDate(t.date) || fingerprintTxnDate(t.date),
+          desc: (t.desc || "").toString().trim().slice(0, 80),
+          amount: Number(t.amount),
+          note: (t.note || "").toString().trim().slice(0, 120),
+        }))
+        .filter(t => t.date && t.desc && Number.isFinite(t.amount));
+      if (!normalizedRaw.length) throw new Error("AI returned no usable transactions.");
 
       // ── Step 2: Local category matching ────────────────────────────────────
       const localDict = buildLocalDict();
       const unmatched = []; // { originalIdx, desc }
-      const withCats = rawTxns.map((t, i) => {
+      const withCats = normalizedRaw.map((t, i) => {
         const localCat = findLocalCat(t.desc, localDict);
         if (localCat) return { ...t, cat: localCat, _localMatch: true };
         unmatched.push({ i: String(i), desc: t.desc });
@@ -5308,46 +5553,7 @@ Do NOT include a "cat" field.`;
       });
 
       // ── Step 3: AI categorizes only unmatched descriptions (small call) ────
-      let aiCatMap = {};
-      if (unmatched.length > 0) {
-        const merchantList = unmatched.map(function(item) { return item.i + ": " + item.desc; }).join("\n");
-        const catRules = [
-          "grocery stores, supermarkets, Costco, Walmart food -> Groceries",
-          "restaurants, fast food, cafes -> Dining Out",
-          "mortgage, utilities, electric, gas bill, water, internet, phone, home repair -> Housing",
-          "gas stations fuel, auto insurance, car payment -> Transportation",
-          "Amazon shopping, retail stores, online shopping non-grocery -> Shopping",
-          "Netflix, Hulu, Disney+, Spotify, YouTube, subscriptions -> Subscriptions",
-          "doctors, hospitals, pharmacy, therapy, medical -> Medical",
-          "ABA therapy, Success on Spectrum -> ABA Therapy",
-          "kids activities, school, children stores -> Kids & Family",
-          "loan payments, credit card payments -> Debt Service",
-          "church, tithe, giving -> Giving & Tithe",
-          "gas station snacks, misc small purchases -> Snacks/Misc",
-          "paycheck deposits -> Income",
-          "transfers between own accounts, CC payments -> Transfer"
-        ].join("\n");
-        const catPrompt = [
-          "Categorize each merchant into exactly one of: " + allCats.join(", "),
-          "",
-          "Rules:",
-          catRules,
-          "",
-          "Merchants:",
-          merchantList,
-          "",
-          'Return ONLY a JSON object like: {"0":"Groceries","1":"Housing"}'
-        ].join("\n");
-        const catRes = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-          body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 800,
-            messages: [{ role: "user", content: catPrompt }]
-          })
-        });
-        const catData = await catRes.json();
-        aiCatMap = JSON.parse((catData.content?.find(b=>b.type==="text")?.text||"{}").replace(/```json|```/g,"").trim());
-      }
+      const aiCatMap = await requestAICategories(unmatched, ANTHROPIC_API_KEY);
 
       // ── Merge and finalize ──────────────────────────────────────────────────
       const txns = withCats.map((t, i) => {
@@ -5357,13 +5563,15 @@ Do NOT include a "cat" field.`;
 
       const filtered = txns.filter(t => stmtSrc === "checking" ? true : t.cat !== "Income" && t.cat !== "Transfer");
       const localCount = filtered.filter(t => t._localMatch).length;
-      setMatchStats({ local: localCount, ai: filtered.length - localCount, total: filtered.length });
+      setMatchStats({ local: localCount, ai: filtered.length - localCount, total: filtered.length, csv: fileType === "csv" });
       setParsed(filtered);
       setReviewed(filtered.map(t => ({ ...t, _include: true })));
+      setAiRanOnCsv(fileType === "csv");
+      setLocalCsvFailed(false);
       setLocalPdfFailed(false);
       setStep("review");
     } catch (err) {
-      setParseError("AI parse failed: " + err.message);
+      setParseError(`AI ${fileType === "csv" ? "CSV" : "PDF"} parse failed: ${err.message}`);
       setStep("upload");
     }
   };
@@ -5450,7 +5658,7 @@ Do NOT include a "cat" field.`;
   const reset = () => {
     setStep("upload"); setFileName(null); setFileType(null); setPdfB64(null); setCsvText(null);
     setParsed([]); setReviewed([]); setParseError(null); setEditingIdx(null);
-    setAiRanOnCsv(false); setRunningAI(false); setLocalPdfFailed(false); setParsingMode("local");
+    setAiRanOnCsv(false); setRunningAI(false); setLocalCsvFailed(false); setLocalPdfFailed(false); setParsingMode("local");
   };
 
   const duplicateRows = useMemo(() => {
@@ -5505,7 +5713,7 @@ Do NOT include a "cat" field.`;
           <div style={{width:44,height:44,borderRadius:14,background:accentImport+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>📥</div>
           <div>
             <Label style={{marginBottom:2}}>Import Statement</Label>
-            <div style={{fontSize:13,color:MUTED}}>CSV and PDF both parse locally first. AI is optional for categorization, and optional for PDF extraction only when local PDF parsing fails.</div>
+            <div style={{fontSize:13,color:MUTED}}>CSV and PDF both parse locally first. If local parsing cannot confidently detect transactions, the app explains why and offers optional AI extraction. AI categorization remains optional in Review.</div>
           </div>
         </div>
       </Card>
@@ -5541,15 +5749,15 @@ Do NOT include a "cat" field.`;
             <div style={{fontSize:12,fontWeight:800,color:accentImport,marginBottom:8,textTransform:"uppercase",letterSpacing:".5px"}}>How AI is used</div>
             <div style={{fontSize:12,color:MUTED,display:"grid",gap:5}}>
               <div>1. CSV and PDF both start with local parsing in your browser.</div>
-              <div>2. CSV import is fully local by default; in Review, you can optionally run AI categorization.</div>
-              <div>3. PDF import tries local extraction first; if it fails, you can optionally send the PDF to AI for extraction.</div>
+              <div>2. CSV import tries header scan, statement-export fallback, and headerless column inference locally before Review.</div>
+              <div>3. If local CSV or PDF parsing fails, the error explains why local detection failed before optional AI extraction is offered.</div>
               <div>4. Category matching runs locally first using your existing transactions.</div>
               <div>5. Only unmatched merchant descriptions are sent to AI for category suggestions.</div>
               <div>6. You review/edit every row before anything is added to your dashboard.</div>
             </div>
             <div style={{height:1,background:BORDER,margin:"10px 0"}}/>
             <div style={{fontSize:11,color:DIM,display:"grid",gap:4}}>
-              <div>Data sent on AI PDF extraction (optional): PDF contents, statement type, selected month.</div>
+              <div>Data sent on AI file extraction (optional): raw CSV or PDF contents, statement type, selected month.</div>
               <div>Data sent on AI categorization (optional): unmatched merchant descriptions and allowed category names.</div>
               <div>No transactions are imported until you confirm in Review.</div>
             </div>
@@ -5572,7 +5780,7 @@ Do NOT include a "cat" field.`;
             <div style={{fontSize:40,marginBottom:12}}>{fileName?"✅":fileType==="csv"?"📊":"📄"}</div>
             {fileName
               ? <><div style={{fontSize:15,fontWeight:700,color:accentImport,marginBottom:4}}>{fileName}</div>
-                  <div style={{fontSize:12,color:MUTED}}>{fileType==="csv"?"CSV ready — local parse first (AI optional in Review)":"PDF ready — local parse first, AI fallback optional"} · click to change</div></>
+                  <div style={{fontSize:12,color:MUTED}}>{fileType==="csv"?"CSV ready — local parse first, explained fallback if needed":"PDF ready — local parse first, explained fallback if needed"} · click to change</div></>
               : <><div style={{fontSize:15,fontWeight:600,color:TEXT,marginBottom:6}}>Drop your bank statement here</div>
                   <div style={{fontSize:12,color:MUTED}}>or click to browse · PDF or CSV</div>
                   <div style={{fontSize:11,color:DIM,marginTop:8}}>PDF/CSV: local parse first · AI options are available only when needed.</div></>
@@ -5612,6 +5820,17 @@ Do NOT include a "cat" field.`;
               Optional AI PDF Extraction (Send PDF to AI)
             </button>
           )}
+          {fileType === "csv" && localCsvFailed && (
+            <button
+              onClick={parseWithAI}
+              style={{
+                marginTop:10,width:"100%",padding:"11px",borderRadius:10,fontSize:13,fontWeight:800,
+                background:"#8b5cf622",color:"#8b5cf6",cursor:"pointer",
+                border:"1px solid #8b5cf655",transition:"all .2s",
+              }}>
+              Optional AI CSV Extraction (Send CSV to AI)
+            </button>
+          )}
         </Card>
       )}
 
@@ -5623,7 +5842,9 @@ Do NOT include a "cat" field.`;
             <div style={{fontSize:18,fontWeight:700,color:TEXT,marginBottom:8}}>Parsing your statement…</div>
             <div style={{fontSize:13,color:MUTED,marginBottom:24}}>{parsingMode === "ai" ? "AI parsing in progress." : "Running local parser in your browser."}</div>
             <div style={{display:"flex",justifyContent:"center",gap:6}}>
-              {(parsingMode === "ai" ? ["Uploading PDF","AI extraction","Auto-categorizing","Building review"] : ["Reading file","Extracting lines","Local categorization","Building review"]).map((s,i)=>(
+              {(parsingMode === "ai"
+                ? [fileType === "csv" ? "Uploading CSV" : "Uploading PDF","AI extraction","Auto-categorizing","Building review"]
+                : ["Reading file","Extracting lines","Local categorization","Building review"]).map((s,i)=>(
                 <div key={i} style={{fontSize:11,color:accentImport,background:accentImport+"15",padding:"4px 10px",borderRadius:99,border:`1px solid ${accentImport}33`}}>{s}</div>
               ))}
             </div>
@@ -5846,7 +6067,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.12";
+const APP_VERSION = "0.1.13";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",

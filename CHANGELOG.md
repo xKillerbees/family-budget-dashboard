@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.13] - 2026-03-08
+
+### Added
+- Optional AI CSV extraction fallback after local CSV parsing fails, using the same review workflow as other imports.
+
+### Changed
+- Local CSV parse failures now explain why local detection failed before offering the AI fallback path.
+- Import help text and README now document the local-first CSV fallback strategy, optional AI extraction, and duplicate-import review warnings.
+
 ## [0.1.12] - 2026-03-08
 
 ### Added

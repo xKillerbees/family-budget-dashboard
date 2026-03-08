@@ -9,8 +9,8 @@ React + Vite budget dashboard for tracking spending, payoffs, scenarios, and mon
 ## Privacy
 
 - All transactions, settings, and API keys are stored in browser `localStorage`.
-- CSV/PDF import runs local-first.
-- AI is optional and only used after explicit user action.
+- CSV/PDF import runs local-first with multiple CSV fallback strategies before any AI path is offered.
+- AI is optional and only used after explicit user action for import extraction, import categorization, or tips.
 
 ## Core Features
 
@@ -35,14 +35,19 @@ React + Vite budget dashboard for tracking spending, payoffs, scenarios, and mon
   - Example preview charts when only one month exists
 - Import:
   - Local CSV/PDF parsing and review workflow
-  - Optional AI fallback parsing when local parse is insufficient
+  - CSV parsing tries header scan, bank/statement-export fallback, and headerless column inference
+  - Duplicate transaction warnings before import confirmation
+  - Optional AI extraction fallback for CSV/PDF only when local parsing is insufficient
+  - Optional AI categorization in Review for unmatched merchants
 
 ## AI Features
 
 AI is used in two places:
 
-1. Import fallback parsing (optional)
+1. Import extraction/categorization (optional)
 2. Tips/recommendations refresh (optional)
+
+Import extraction stays local-first. If local parsing cannot confidently detect transactions, the app explains the failure reason and lets you optionally send the raw CSV or PDF contents to AI for extraction.
 
 Tips are saved per month, and the UI can display the last AI prompt used for the selected month.
 
