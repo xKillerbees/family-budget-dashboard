@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.15] - 2026-03-08
+
+### Added
+- Transactions can now be marked as recurring planning items, with recurring badges/actions in Transactions and a recurring-items management card in Settings.
+
+### Changed
+- Normalized planning now adds recurring items only when the current month does not already contain a matching actual transaction.
+- Import no longer asks for a month up front; imported transaction dates now determine the month automatically throughout review and completion messaging.
+- Trends chart hover highlights now use themed dark-mode cursors instead of bright default white overlays.
+
 ## [0.1.14] - 2026-03-08
 
 ### Changed

@@ -353,7 +353,10 @@ function CashFlowSankey({ viewMode }) {
 function Summary({wide, isMobile}) {
   const [view, setView] = useState("actual");
   const [expandedCat, setExpandedCat] = useState(null);
-  const { summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus, takeHome, selectedMonth, oneTimes, hideZeroSummaryCats } = useBudget();
+  const {
+    summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus, takeHome,
+    selectedMonth, selectedYear, oneTimes, recurringItems, hideZeroSummaryCats,
+  } = useBudget();
 
   // Merge all transactions for the expandable drill-down
   const ALL_TXNS = useMemo(() => [
@@ -383,6 +386,7 @@ function Summary({wide, isMobile}) {
     ? sortedSummaryRows.filter(r => (view==="norm" ? r.norm : (r.checking + r.cc)) !== 0)
     : sortedSummaryRows;
   const summaryCols = "26px minmax(0,1.85fr) minmax(0,0.75fr) minmax(0,0.55fr) minmax(0,1.25fr) minmax(72px,0.95fr)";
+  const recurringPlannedTotal = summaryRows.reduce((s, r) => s + (r.recurringPlanned || 0), 0);
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       <Card glow="#ef4444">
@@ -451,6 +455,7 @@ function Summary({wide, isMobile}) {
                         </div>
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontSize:14,fontWeight:isOpen?700:600,color:isOpen?r.color:TEXT}}>{r.cat}</div>
+                          {r.recurringPlanned>0&&view==="norm"&&<div style={{marginTop:2}}><Tag color="#22c55e">+{fmt(r.recurringPlanned)} planned</Tag></div>}
                           {r.oneTime>0&&view==="actual"&&<div style={{marginTop:2}}><Tag color="#f59e0b">−{fmt(r.oneTime)} one-time</Tag></div>}
                         </div>
                         <div style={{textAlign:"right",flexShrink:0,display:"flex",alignItems:"center",gap:8}}>
@@ -493,7 +498,7 @@ function Summary({wide, isMobile}) {
                               </span>
                             </div>
                             <div style={{fontSize:13,color:TEXT}}>{t.desc}</div>
-                            {t.note&&!t.note.includes("ONE-TIME")&&<div style={{fontSize:11,color:DIM,marginTop:2}}>{t.note}</div>}
+                            {getTxnDisplayNote(t.note)&&<div style={{fontSize:11,color:DIM,marginTop:2}}>{getTxnDisplayNote(t.note)}</div>}
                           </div>
                         ));
                       const MobileSectionHeader = ({label, total, accent, count}) => (
@@ -569,6 +574,7 @@ function Summary({wide, isMobile}) {
                               </div>
                             )}
                           </div>
+                          {r.recurringPlanned>0&&view==="norm"&&<Tag color="#22c55e">+{fmt(r.recurringPlanned)} planned</Tag>}
                           {r.oneTime>0&&view==="actual"&&<Tag color="#f59e0b">−{fmt(r.oneTime)} one-time</Tag>}
                           <span style={{fontSize:10,color:isOpen?r.color:MUTED,marginLeft:"auto",transition:"transform .2s",display:"inline-block",transform:isOpen?"rotate(180deg)":"none"}}>▾</span>
                         </div>
@@ -596,8 +602,13 @@ function Summary({wide, isMobile}) {
                               <div style={{fontSize:11,color:MUTED,fontVariantNumeric:"tabular-nums"}}>{t.date}</div>
                               <div>
                                 <div style={{fontSize:12,color:TEXT}}>{t.desc}</div>
-                                {t.note&&!t.note.includes("ONE-TIME")&&<div style={{fontSize:10,color:DIM,marginTop:1}}>{t.note}</div>}
-                                {t.note?.includes("ONE-TIME")&&<Tag color="#f59e0b">one-time</Tag>}
+                                {getTxnDisplayNote(t.note)&&<div style={{fontSize:10,color:DIM,marginTop:1}}>{getTxnDisplayNote(t.note)}</div>}
+                                {(hasTxnNoteFlag(t.note, "ONE-TIME") || hasTxnNoteFlag(t.note, "RECURRING")) && (
+                                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:2}}>
+                                    {hasTxnNoteFlag(t.note, "ONE-TIME")&&<Tag color="#f59e0b">one-time</Tag>}
+                                    {hasTxnNoteFlag(t.note, "RECURRING")&&<Tag color="#22c55e">recurring</Tag>}
+                                  </div>
+                                )}
                               </div>
                               <div style={{textAlign:"right",fontSize:13,fontWeight:700,
                                 color:t.amount<0?"#22c55e":TEXT,fontVariantNumeric:"tabular-nums"}}>
@@ -680,6 +691,29 @@ function Summary({wide, isMobile}) {
                 </div>
               ))}
             </div>
+          </Card>
+          <Card>
+            <Label>Recurring Planning Items</Label>
+            {recurringItems.length === 0
+              ? <div style={{fontSize:12,color:MUTED}}>No recurring planning items yet — mark a transaction as recurring in Transactions.</div>
+              : recurringItems.map((item, i)=>(
+                <div key={buildRecurringItemKey(item) || i} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:`1px solid ${BORDER}`,gap:10}}>
+                  <div>
+                    <div style={{fontSize:13,color:MUTED}}>{item.name}</div>
+                    <div style={{fontSize:11,color:DIM}}>
+                      {item.cat} · {recurringSourceLabel(item.src)} · starts {normalizeMonthName(item.startMonth) || selectedMonth} {item.startYear || selectedYear}
+                    </div>
+                  </div>
+                  <span style={{fontSize:14,fontWeight:700,color:"#22c55e",fontVariantNumeric:"tabular-nums"}}>{fmt(item.amount)}</span>
+                </div>
+              ))
+            }
+            {recurringItems.length > 0 && (
+            <div style={{display:"flex",justifyContent:"space-between",paddingTop:10}}>
+              <span style={{fontSize:13,fontWeight:700,color:"#94a3b8"}}>{selectedMonth} planned add-in</span>
+              <span style={{fontSize:15,fontWeight:900,color:"#22c55e",fontVariantNumeric:"tabular-nums"}}>{fmt(recurringPlannedTotal)}</span>
+            </div>
+            )}
           </Card>
           <Card>
             <Label>One-Time Items (excluded from recurring)</Label>
@@ -1840,7 +1874,7 @@ function Categories({wide, isMobile}) {
                               <span style={{fontSize:11,color:MUTED,minWidth:32}}>{t.date}</span>
                               <div>
                                 <div style={{fontSize:12,color:TEXT}}>{t.desc}</div>
-                                {t.note&&!t.note.includes("ONE-TIME")&&<div style={{fontSize:10,color:DIM,marginTop:1}}>{t.note}</div>}
+                                {getTxnDisplayNote(t.note)&&<div style={{fontSize:10,color:DIM,marginTop:1}}>{getTxnDisplayNote(t.note)}</div>}
                               </div>
                             </div>
                             <span style={{fontSize:13,fontWeight:700,color:t.amount<0?"#22c55e":TEXT,fontVariantNumeric:"tabular-nums",flexShrink:0}}>
@@ -2072,9 +2106,9 @@ function TxnTable({ src, isMobile }) {
   const {
     checkTxns, ccTxns,
     updateTxnCat, updateTxn, deleteTxn, replaceTxn,
-    selectedMonth, availableMonths, addTxns,
+    selectedMonth, selectedYear, availableMonths, addTxns,
     allCats, catColorsAll, toggleTxnTagging,
-    mobileTxnActionMenu, oneTimes, setOneTimes,
+    mobileTxnActionMenu, oneTimes, setOneTimes, recurringItems, setRecurringItems,
   } = useBudget();
   const [splitTxn, setSplitTxn] = useState(null); // txn being split
   const [editId, setEditId] = useState(null);
@@ -2087,8 +2121,8 @@ function TxnTable({ src, isMobile }) {
   const [sortBy,      setSortBy]      = useState("date_desc");
   const [openMenuId,  setOpenMenuId]  = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
-  const desktopTxnCols = "70px minmax(220px,1fr) 130px 180px 220px 70px";
-  const desktopTxnMinW = 980;
+  const desktopTxnCols = "70px minmax(220px,1fr) 130px 180px 290px 70px";
+  const desktopTxnMinW = 1050;
   const money2 = useCallback((n) => new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
@@ -2170,7 +2204,7 @@ function TxnTable({ src, isMobile }) {
   };
 
   const isOneTimeTxn = useCallback((t) => {
-    const hasNoteFlag = /\bONE-TIME\b/i.test(t.note || "");
+    const hasNoteFlag = hasTxnNoteFlag(t.note, "ONE-TIME");
     if (hasNoteFlag) return true;
     return oneTimes.some(o =>
       (o.cat || "") === (t.cat || "") &&
@@ -2199,10 +2233,45 @@ function TxnTable({ src, isMobile }) {
       });
     }
 
-    const cleaned = (t.note || "").replace(/\bONE-TIME\b/ig, "").replace(/\s{2,}/g, " ").trim();
-    const nextNote = current ? cleaned : [cleaned, "ONE-TIME"].filter(Boolean).join(" ");
+    const nextNote = withTxnNoteFlag(t.note, "ONE-TIME", !current);
     updateTxn(src, t.id, { date: t.date, desc: t.desc, amount: t.amount, note: nextNote });
   }, [isOneTimeTxn, setOneTimes, updateTxn, src]);
+
+  const isRecurringTxn = useCallback((t) => {
+    const hasNoteFlag = hasTxnNoteFlag(t.note, "RECURRING");
+    if (hasNoteFlag) return true;
+    const txnSig = fingerprintTxnDesc(t.desc || "");
+    return recurringItems.some(item =>
+      (item.cat || "") === (t.cat || "")
+      && (item.src || "") === src
+      && Math.abs((Number(item.amount) || 0) - Math.abs(Number(t.amount) || 0)) < 0.01
+      && fingerprintTxnDesc(item.name || "") === txnSig
+    );
+  }, [recurringItems, src]);
+
+  const toggleRecurringTxn = useCallback((t) => {
+    const current = isRecurringTxn(t);
+    const nextItem = {
+      name: t.desc || "Recurring expense",
+      amount: Math.abs(Number(t.amount) || 0),
+      cat: t.cat,
+      src,
+      startMonth: deriveTxnMonth(t) || selectedMonth,
+      startYear: deriveTxnYear(t, selectedYear) || selectedYear,
+    };
+    const nextKey = buildRecurringItemKey(nextItem);
+    if (current) {
+      setRecurringItems(prev => {
+        const matchIdx = prev.findIndex(item => recurringTxnMatchesItem({ ...t, src }, item));
+        if (matchIdx < 0) return prev.filter(item => buildRecurringItemKey(item) !== nextKey);
+        return prev.filter((_, idx) => idx !== matchIdx);
+      });
+    } else {
+      setRecurringItems(prev => prev.some(item => buildRecurringItemKey(item) === nextKey) ? prev : [...prev, nextItem]);
+    }
+    const nextNote = withTxnNoteFlag(t.note, "RECURRING", !current);
+    updateTxn(src, t.id, { date: t.date, desc: t.desc, amount: t.amount, note: nextNote });
+  }, [isRecurringTxn, selectedMonth, selectedYear, setRecurringItems, src, updateTxn]);
 
   const requestDeleteTxn = useCallback((t) => {
     setPendingDelete({ id: t.id, desc: t.desc || "Transaction", date: t.date || "", amount: Number(t.amount) || 0 });
@@ -2344,7 +2413,9 @@ function TxnTable({ src, isMobile }) {
               const isIncome   = t.cat==="Income";
               const isTransfer = t.cat==="Transfer";
               const isReturn   = t.amount<0;
+              const canPlanTxn = !isIncome && !isTransfer && !isReturn;
               const isOneTime  = isOneTimeTxn(t);
+              const isRecurring = isRecurringTxn(t);
               const catColor   = catColorsAll[t.cat]||MUTED;
               const amtColor   = isIncome?"#22c55e":isReturn?"#22c55e":isTransfer?MUTED:TEXT;
               const useCompactActions = !!mobileTxnActionMenu;
@@ -2379,13 +2450,19 @@ function TxnTable({ src, isMobile }) {
                                   Cancel edit
                                 </button>
                               )}
-                              {!isIncome && !isTransfer && (
+                              {canPlanTxn && (
                                 <button onClick={() => { setSplitTxn(t); setOpenMenuId(null); }}
                                   style={{background:"#06b6d415",border:"none",borderRadius:5,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"5px 8px",textAlign:"left",fontWeight:700}}>
                                   Split
                                 </button>
                               )}
-                              {!isIncome && !isTransfer && (
+                              {canPlanTxn && (
+                                <button onClick={() => { toggleRecurringTxn(t); setOpenMenuId(null); }}
+                                  style={{background:isRecurring?"#22c55e22":"#33415522",border:"none",borderRadius:5,color:isRecurring?"#22c55e":MUTED,fontSize:11,cursor:"pointer",padding:"5px 8px",textAlign:"left",fontWeight:700}}>
+                                  {isRecurring ? "Unmark recurring" : "Mark recurring"}
+                                </button>
+                              )}
+                              {canPlanTxn && (
                                 <button onClick={() => { toggleOneTimeTxn(t); setOpenMenuId(null); }}
                                   style={{background:isOneTime?"#f59e0b22":"#33415522",border:"none",borderRadius:5,color:isOneTime?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"5px 8px",textAlign:"left",fontWeight:700}}>
                                   {isOneTime ? "Unmark one-time" : "Mark one-time"}
@@ -2415,11 +2492,17 @@ function TxnTable({ src, isMobile }) {
                             <button onClick={cancelEdit} title="Cancel"
                               style={{background:"#33415522",border:"none",borderRadius:4,color:MUTED,fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>Cancel</button>
                           )}
-                          {!isIncome && !isTransfer && (
+                          {canPlanTxn && (
                             <button onClick={() => setSplitTxn(t)} title="Split"
                               style={{background:"#06b6d415",border:"none",borderRadius:4,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>Split</button>
                           )}
-                          {!isIncome && !isTransfer && (
+                          {canPlanTxn && (
+                            <button onClick={() => toggleRecurringTxn(t)} title={isRecurring ? "Unmark recurring" : "Mark recurring"}
+                              style={{background:isRecurring?"#22c55e22":"#33415522",border:"none",borderRadius:4,color:isRecurring?"#22c55e":MUTED,fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>
+                              Recurring
+                            </button>
+                          )}
+                          {canPlanTxn && (
                             <button onClick={() => toggleOneTimeTxn(t)} title={isOneTime ? "Unmark one-time" : "Mark one-time"}
                               style={{background:isOneTime?"#f59e0b22":"#33415522",border:"none",borderRadius:4,color:isOneTime?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"1px 6px",lineHeight:1.5,flexShrink:0,fontWeight:700}}>
                               One-time
@@ -2456,11 +2539,12 @@ function TxnTable({ src, isMobile }) {
                         <>
                           <div style={{fontSize:14,fontWeight:500,color:isIncome?"#22c55e":TEXT,lineHeight:1.3}}>
                             {t.desc}
+                            {isRecurring&&<span style={{marginLeft:6}}><Tag color="#22c55e">recurring</Tag></span>}
                             {isOneTime&&<span style={{marginLeft:6}}><Tag color="#f59e0b">one-time</Tag></span>}
                             {t.excludeFromTags&&<span style={{marginLeft:6}}><Tag color="#f59e0b">excluded</Tag></span>}
                           </div>
-                          {t.note&&!t.note.includes("ONE-TIME")&&(
-                            <div style={{fontSize:11,color:DIM,marginTop:2}}>{t.note}</div>
+                          {getTxnDisplayNote(t.note)&&(
+                            <div style={{fontSize:11,color:DIM,marginTop:2}}>{getTxnDisplayNote(t.note)}</div>
                           )}
                         </>
                       )}
@@ -2488,7 +2572,9 @@ function TxnTable({ src, isMobile }) {
               </div>
               {filtered.map((t,i)=>{
                 const isIncome=t.cat==="Income", isTransfer=t.cat==="Transfer", isReturn=t.amount<0;
+                const canPlanTxn = !isIncome && !isTransfer && !isReturn;
                 const isOneTime=isOneTimeTxn(t);
+                const isRecurring=isRecurringTxn(t);
                 const isEditing = editId === t.id;
                 return (
                   <div key={i} style={{display:"grid",gridTemplateColumns:desktopTxnCols,columnGap:10,padding:"10px 16px",borderBottom:`1px solid ${BORDER}`,background:isIncome?"#22c55e07":isTransfer?"#33415507":i%2===0?SURFACE:BG,opacity:isTransfer?.5:1,minWidth:desktopTxnMinW}}>
@@ -2509,10 +2595,10 @@ function TxnTable({ src, isMobile }) {
                       ) : (
                         <>
                           <div style={{fontSize:13,color:isIncome?"#22c55e":TEXT,fontWeight:isIncome?700:400,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                            {t.desc}{isOneTime&&<Tag color="#f59e0b">one-time</Tag>}
+                            {t.desc}{isRecurring&&<Tag color="#22c55e">recurring</Tag>}{isOneTime&&<Tag color="#f59e0b">one-time</Tag>}
                             {t.excludeFromTags&&<Tag color="#f59e0b">excluded</Tag>}
                           </div>
-                          {t.note&&!t.note.includes("ONE-TIME")&&<div style={{fontSize:11,color:DIM,marginTop:2}}>{t.note}</div>}
+                          {getTxnDisplayNote(t.note)&&<div style={{fontSize:11,color:DIM,marginTop:2}}>{getTxnDisplayNote(t.note)}</div>}
                         </>
                       )}
                     </div>
@@ -2528,7 +2614,7 @@ function TxnTable({ src, isMobile }) {
                         style={{background:"#22c55e15",border:"none",borderRadius:4,color:"#22c55e",fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>
                         {isEditing ? "Save" : "Edit"}
                       </button>
-                      {!isIncome && !isTransfer && (
+                      {canPlanTxn && (
                         <button onClick={() => setSplitTxn(t)} title="Split transaction"
                           style={{background:"#06b6d415",border:"none",borderRadius:4,color:"#06b6d4",fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>Split</button>
                       )}
@@ -2538,7 +2624,13 @@ function TxnTable({ src, isMobile }) {
                           {t.excludeFromTags ? "NoTag" : "Tag"}
                         </button>
                       )}
-                      {!isIncome && !isTransfer && !isEditing && (
+                      {canPlanTxn && !isEditing && (
+                        <button onClick={() => toggleRecurringTxn(t)} title={isRecurring ? "Unmark recurring" : "Mark recurring"}
+                          style={{background:isRecurring?"#22c55e22":"#33415522",border:"none",borderRadius:4,color:isRecurring?"#22c55e":MUTED,fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>
+                          Recurring
+                        </button>
+                      )}
+                      {canPlanTxn && !isEditing && (
                         <button onClick={() => toggleOneTimeTxn(t)} title={isOneTime ? "Unmark one-time" : "Mark one-time"}
                           style={{background:isOneTime?"#f59e0b22":"#33415522",border:"none",borderRadius:4,color:isOneTime?"#f59e0b":MUTED,fontSize:11,cursor:"pointer",padding:"2px 7px",lineHeight:1.4,fontWeight:700}}>
                           One-time
@@ -4067,6 +4159,8 @@ function Trends({ wide, isMobile }) {
   const [focusCat, setFocusCat] = useState(null);
 
   const MONTH_ORDER = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const chartHoverFill = "#818cf814";
+  const chartHoverLine = { stroke: "#818cf866", strokeWidth: 1.5, strokeDasharray: "4 4" };
 
   // Build per-month totals for each category across all available months
   const trendData = useMemo(() => {
@@ -4171,7 +4265,7 @@ function Trends({ wide, isMobile }) {
               <BarChart data={trendData} barCategoryGap="35%">
                 <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
                 <YAxis hide/>
-                <Tooltip formatter={v=>[fmt(v),"Spending"]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
+                <Tooltip cursor={{ fill: chartHoverFill }} formatter={v=>[fmt(v),"Spending"]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
                 <Bar dataKey="_total" name="Total Spend" radius={[6,6,0,0]}>
                   {trendData.map((d,i)=>(
                     <Cell key={i} fill={d.month===selectedMonth.slice(0,3)?"#818cf8":"#818cf844"}/>
@@ -4188,7 +4282,7 @@ function Trends({ wide, isMobile }) {
                 <CartesianGrid stroke={BORDER} strokeDasharray="3 3" />
                 <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
                 <YAxis tick={{fontSize:11,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`} width={40}/>
-                <Tooltip formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
+                <Tooltip cursor={chartHoverLine} formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
                 <Legend />
                 <Area type="monotone" dataKey="income" name="Income" stroke="#22c55e" fill="#22c55e22" />
                 <Area type="monotone" dataKey="spend" name="Spending" stroke="#ef4444" fill="#ef444422" />
@@ -4203,7 +4297,7 @@ function Trends({ wide, isMobile }) {
                 <CartesianGrid stroke={BORDER} strokeDasharray="3 3" />
                 <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
                 <YAxis tick={{fontSize:11,fill:MUTED}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`} width={40}/>
-                <Tooltip formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
+                <Tooltip cursor={chartHoverLine} formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
                 <Legend />
                 {topTrendCats.map(c => (
                   <Line key={c.cat} type="monotone" dataKey={c.cat} stroke={c.color} strokeWidth={2.5} dot={{r:3}} activeDot={{r:5}} />
@@ -4226,7 +4320,7 @@ function Trends({ wide, isMobile }) {
               <BarChart data={trendData} barCategoryGap="30%" barGap={2}>
                 <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
                 <YAxis hide/>
-                <Tooltip formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:11,maxHeight:300,overflowY:"auto"}}/>
+                <Tooltip cursor={{ fill: chartHoverFill }} formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:11,maxHeight:300,overflowY:"auto"}}/>
                 {summaryRows.filter(r => !focusCat || r.cat === focusCat).map((r, ri, arr) => (
                   <Bar key={r.cat} dataKey={r.cat} stackId="a" fill={r.color}
                     opacity={focusCat && focusCat !== r.cat ? 0.15 : 1}
@@ -4259,7 +4353,7 @@ function Trends({ wide, isMobile }) {
                 <BarChart data={deltaData} barCategoryGap="40%">
                   <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
                   <YAxis hide/>
-                  <Tooltip formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
+                  <Tooltip cursor={{ fill: chartHoverFill }} formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
                   <ReferenceLine y={0} stroke={BORDER}/>
                   <Bar dataKey="delta" name="Change vs prior month" radius={[4,4,0,0]}>
                     {deltaData.map((d,i)=>(
@@ -4330,7 +4424,7 @@ function Trends({ wide, isMobile }) {
                 <CartesianGrid stroke={BORDER} strokeDasharray="3 3" />
                 <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
                 <YAxis hide />
-                <Tooltip formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
+                <Tooltip cursor={chartHoverLine} formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
                 <Legend />
                 <Area type="monotone" dataKey="_income" name="Income (sample)" stroke="#22c55e" fill="#22c55e22" />
                 <Area type="monotone" dataKey="_total" name="Spending (sample)" stroke="#ef4444" fill="#ef444422" />
@@ -4345,7 +4439,7 @@ function Trends({ wide, isMobile }) {
                 <CartesianGrid stroke={BORDER} strokeDasharray="3 3" />
                 <XAxis dataKey="month" tick={{fontSize:12,fill:MUTED}} axisLine={false} tickLine={false}/>
                 <YAxis hide />
-                <Tooltip formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
+                <Tooltip cursor={chartHoverLine} formatter={(v,n)=>[fmt(v),n]} contentStyle={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,fontSize:12}}/>
                 <Legend />
                 {demoTopCats.map(c => (
                   <Line key={c.cat} type="monotone" dataKey={c.cat} stroke={c.color} strokeWidth={2.5} dot={{r:3}} activeDot={{r:5}} />
@@ -4456,7 +4550,7 @@ function NewCatInput({ onAdd, allCats }) {
 function Settings({ isMobile }) {
   const {
     takeHome, setTakeHome,
-    oneTimes, setOneTimes,
+    oneTimes, setOneTimes, recurringItems, setRecurringItems,
     budgetKc, setBudgetKc,
     t2CarryIn, setT2CarryIn,
     groceryGoal, setGroceryGoal,
@@ -4525,7 +4619,7 @@ function Settings({ isMobile }) {
       checkTxns, ccTxns,
       takeHome, t2CarryIn, groceryGoal,
       familySize,
-      oneTimes, budgetKc, payoffs,
+      oneTimes, recurringItems, budgetKc, payoffs,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -4548,6 +4642,7 @@ function Settings({ isMobile }) {
         if (d.groceryGoal) setGroceryGoal(d.groceryGoal);
         if (d.familySize) setFamilySize(Math.max(1, parseInt(d.familySize, 10) || 1));
         if (d.oneTimes)   setOneTimes(d.oneTimes);
+        if (d.recurringItems) setRecurringItems(d.recurringItems);
         if (d.budgetKc)   setBudgetKc(d.budgetKc);
         if (d.payoffs)    setPayoffs(d.payoffs);
         setImportErr("✓ Restored successfully — " + (d.checkTxns?.length||0) + " checking + " + (d.ccTxns?.length||0) + " CC transactions");
@@ -4949,6 +5044,34 @@ function Settings({ isMobile }) {
         </div>
       </Card>
 
+      {/* Recurring Planning Items */}
+      <Card glow="#22c55e" style={{marginTop:16}}>
+        <Label>Recurring Planning Items</Label>
+        <div style={{fontSize:12,color:MUTED,marginBottom:12}}>Mark a transaction as recurring in Transactions to carry it into future months when the actual charge has not arrived yet.</div>
+        {recurringItems.length > 0 ? (
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {recurringItems.map((item, i) => (
+              <div key={buildRecurringItemKey(item) || i} style={{display:"flex",alignItems:"center",gap:8,background:BG,borderRadius:8,padding:"6px 10px"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,color:TEXT}}>{item.name}</div>
+                  <div style={{fontSize:11,color:MUTED}}>
+                    {item.cat} · {recurringSourceLabel(item.src)} · starts {normalizeMonthName(item.startMonth)} {item.startYear}
+                  </div>
+                </div>
+                <span style={{fontSize:12,color:"#22c55e",fontWeight:700}}>${Number(item.amount || 0).toLocaleString()}</span>
+                <button onClick={() => {
+                  if (!confirmDeleteAction("Delete this recurring planning item?")) return;
+                  setRecurringItems(prev => prev.filter((_, j) => j !== i));
+                }}
+                  style={{background:"#ef444422",color:"#ef4444",border:"none",borderRadius:6,padding:"2px 8px",fontSize:11,cursor:"pointer",fontWeight:700}}>✕</button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{fontSize:12,color:MUTED}}>No recurring planning items yet.</div>
+        )}
+      </Card>
+
       {/* One-Time Expenses */}
       <Card glow="#ec4899" style={{marginTop:16}}>
         <Label>One-Time Expenses</Label>
@@ -5028,7 +5151,6 @@ function StatementImporter({ wide, isMobile }) {
   // Steps: "upload" → "parsing" → "review" → "done"
   const [step, setStep]         = useState("upload");
   const [stmtSrc, setStmtSrc]   = useState("checking");
-  const [month, setMonth]       = useState(MONTHS[1]); // Feb default
   const [dragOver, setDragOver] = useState(false);
   const [fileName, setFileName] = useState(null);
   const [fileType, setFileType] = useState(null); // "pdf" | "csv"
@@ -5519,7 +5641,7 @@ function StatementImporter({ wide, isMobile }) {
     setParseError(null);
     try {
       const extractPrompt = fileType === "csv"
-        ? `Parse ALL transactions from this ${stmtSrc === "checking" ? "checking account" : "credit card"} CSV export for ${month}.
+        ? `Parse ALL transactions from this ${stmtSrc === "checking" ? "checking account" : "credit card"} CSV export.
 The CSV may contain preamble rows, malformed quoting, separate debit/credit columns, or multiple possible layouts.
 Return ONLY a JSON array, no markdown. Each object:
 - "date": "MM/DD"
@@ -5528,7 +5650,7 @@ Return ONLY a JSON array, no markdown. Each object:
 - "note": brief note or ""
 Do NOT include a "cat" field.
 Ignore non-transaction metadata rows and balances.`
-        : `Parse ALL transactions from this ${stmtSrc === "checking" ? "checking account" : "credit card"} statement for ${month}.
+        : `Parse ALL transactions from this ${stmtSrc === "checking" ? "checking account" : "credit card"} statement.
 Return ONLY a JSON array, no markdown. Each object:
 - "date": "MM/DD"
 - "desc": clean merchant name, max 40 chars (e.g. "Target", "Costco", "McKeever's Market")
@@ -5623,7 +5745,7 @@ Do NOT include a "cat" field.`;
     }
     const toAdd = reviewed
       .filter(t => t._include)
-      .map(({ _include, ...t }) => ({ ...t, month, year: selectedYear }));
+      .map(({ _include, ...t }) => ({ ...t, year: selectedYear }));
     addTxns(stmtSrc, toAdd);
     setStep("done");
   };
@@ -5709,7 +5831,7 @@ Do NOT include a "cat" field.`;
     const existingPrepared = (stmtSrc === "checking" ? checkTxns : ccTxns)
       .map(t => prepare(t))
       .filter(t => t.date && Number.isFinite(t.amountCents) && Number.isFinite(t.year));
-    const reviewPrepared = reviewed.map(t => prepare({ ...t, month, year: selectedYear }));
+    const reviewPrepared = reviewed.map(t => prepare({ ...t, year: selectedYear }));
     const exactCounts = new Map();
     reviewPrepared.forEach(item => {
       if (!item.exactKey) return;
@@ -5737,7 +5859,7 @@ Do NOT include a "cat" field.`;
         flagged: matchesExisting || possibleExisting || repeatsInImport || possibleRepeatInImport,
       };
     });
-  }, [stmtSrc, checkTxns, ccTxns, reviewed, month, selectedYear]);
+  }, [stmtSrc, checkTxns, ccTxns, reviewed, selectedYear]);
 
   const duplicateCount = duplicateRows.filter(r => r.flagged).length;
   const existingDuplicateCount = duplicateRows.filter(r => r.matchesExisting || r.possibleExisting).length;
@@ -5776,8 +5898,8 @@ Do NOT include a "cat" field.`;
       {/* ── STEP: UPLOAD ── */}
       {step === "upload" && (
         <Card>
-          {/* Source + Month selectors */}
-          <div style={{display:"grid",gridTemplateColumns:wide?"1fr 1fr":"1fr",gap:12,marginBottom:20}}>
+          {/* Source selector */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr",gap:12,marginBottom:20}}>
             <div>
               <div style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",marginBottom:8}}>Statement Type</div>
               <div style={{display:"flex",gap:8}}>
@@ -5790,13 +5912,6 @@ Do NOT include a "cat" field.`;
                   }}>{l}</button>
                 ))}
               </div>
-            </div>
-            <div>
-              <div style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",marginBottom:8}}>Month</div>
-              <select value={month} onChange={e=>setMonth(e.target.value)}
-                style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:10,padding:"10px 14px",color:TEXT,fontSize:13,outline:"none"}}>
-                {MONTHS.map(m=><option key={m} value={m}>{m} 2026</option>)}
-              </select>
             </div>
           </div>
 
@@ -5812,8 +5927,9 @@ Do NOT include a "cat" field.`;
             </div>
             <div style={{height:1,background:BORDER,margin:"10px 0"}}/>
             <div style={{fontSize:11,color:DIM,display:"grid",gap:4}}>
-              <div>Data sent on AI file extraction (optional): raw CSV or PDF contents, statement type, selected month.</div>
+              <div>Data sent on AI file extraction (optional): raw CSV or PDF contents and statement type.</div>
               <div>Data sent on AI categorization (optional): unmatched merchant descriptions and allowed category names.</div>
+              <div>Imported transaction dates drive the month automatically from the file.</div>
               <div>No transactions are imported until you confirm in Review.</div>
             </div>
           </div>
@@ -5858,9 +5974,9 @@ Do NOT include a "cat" field.`;
               border:"none",transition:"all .2s",letterSpacing:".2px",
             }}>
             {csvText
-              ? `📊 Import ${month} CSV Locally (AI Optional in Review)`
+              ? `📊 Import CSV Locally (AI Optional in Review)`
               : pdfB64
-                ? `Local Parse ${month} ${stmtSrc === "checking" ? "Checking" : "Credit Card"} Statement`
+                ? `Local Parse ${stmtSrc === "checking" ? "Checking" : "Credit Card"} Statement`
                 : "Upload a PDF or CSV first"
             }
           </button>
@@ -5917,7 +6033,7 @@ Do NOT include a "cat" field.`;
               <div>
                 <div style={{fontSize:16,fontWeight:800,color:TEXT}}>Review {parsed.length} transactions</div>
                 <div style={{fontSize:12,color:MUTED,marginTop:2}}>
-                  {stmtSrc==="checking"?"🏦 Checking":"💳 Credit Card"} · {month} {selectedYear} · Uncheck any you want to exclude
+                  {stmtSrc==="checking"?"🏦 Checking":"💳 Credit Card"} · dates come from the file · viewing year {selectedYear}
                 </div>
                 {matchStats && (
                   <div style={{marginTop:6,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
@@ -6083,10 +6199,10 @@ Do NOT include a "cat" field.`;
         <Card>
           <div style={{textAlign:"center",padding:"40px 0"}}>
             <div style={{fontSize:56,marginBottom:16}}>🎉</div>
-            <div style={{fontSize:20,fontWeight:800,color:TEXT,marginBottom:8}}>{month} imported!</div>
+            <div style={{fontSize:20,fontWeight:800,color:TEXT,marginBottom:8}}>Import complete</div>
             <div style={{fontSize:13,color:MUTED,marginBottom:28}}>
               {includedCount} transactions added to Transactions (Checking/Credit Card).<br/>
-              The Summary, Sankey, and Category Breakdown have all updated.
+              Months were derived from the imported transaction dates, and the dashboard has updated.
             </div>
             <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
               <button onClick={reset} style={{
@@ -6124,7 +6240,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.14";
+const APP_VERSION = "0.1.15";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
@@ -6168,6 +6284,24 @@ function deriveTxnYear(t, fallbackYear = null) {
   const fromDate = yearFromDateString(t?.date);
   if (Number.isFinite(fromDate) && fromDate > 1900 && fromDate < 3000) return fromDate;
   return fallbackYear;
+}
+const TXN_NOTE_FLAGS = ["ONE-TIME", "RECURRING"];
+function hasTxnNoteFlag(note, flag) {
+  return new RegExp(`\\b${flag}\\b`, "i").test(note || "");
+}
+function getTxnDisplayNote(note) {
+  let cleaned = (note || "").toString();
+  TXN_NOTE_FLAGS.forEach(flag => {
+    cleaned = cleaned.replace(new RegExp(`\\b${flag}\\b`, "ig"), " ");
+  });
+  return cleaned.replace(/\s{2,}/g, " ").trim();
+}
+function withTxnNoteFlag(note, flag, enabled) {
+  const flags = new Set(TXN_NOTE_FLAGS.filter(name => hasTxnNoteFlag(note, name)));
+  if (enabled) flags.add(flag);
+  else flags.delete(flag);
+  const cleaned = getTxnDisplayNote(note);
+  return [cleaned, ...TXN_NOTE_FLAGS.filter(name => flags.has(name))].filter(Boolean).join(" ").trim();
 }
 const MERCHANT_NOISE_PATTERNS = [
   /\bpoint of sale withdrawal\b/g,
@@ -6261,6 +6395,92 @@ function buildTxnFingerprint(txn, fallbackYear = null) {
   if (!date || !desc || !Number.isFinite(amount) || !Number.isFinite(year)) return null;
   return `${year}|${date}|${Math.round(amount * 100)}|${desc}`;
 }
+function monthYearValue(year, month) {
+  const safeYear = Number(year);
+  const monthIdx = APP_MONTHS.indexOf(normalizeMonthName(month));
+  if (!Number.isFinite(safeYear) || monthIdx < 0) return null;
+  return (safeYear * 12) + monthIdx;
+}
+function isRecurringItemActive(item, month, year) {
+  const currentValue = monthYearValue(year, month);
+  const startValue = monthYearValue(item?.startYear, item?.startMonth);
+  if (currentValue == null) return false;
+  if (startValue == null) return true;
+  return currentValue >= startValue;
+}
+function buildRecurringItemKey(item) {
+  return [
+    item?.src || "",
+    item?.cat || "",
+    Math.round(Math.abs(Number(item?.amount) || 0) * 100),
+    fingerprintTxnDesc(item?.name || ""),
+    Number(item?.startYear) || "",
+    normalizeMonthName(item?.startMonth) || "",
+  ].join("|");
+}
+function recurringSourceLabel(src) {
+  return src === "cc" ? "Credit Card" : "Checking";
+}
+function recurringTxnMatchesItem(txn, item) {
+  if (!txn || !item) return false;
+  if ((txn.cat || "") !== (item.cat || "")) return false;
+  if ((item.src || "") && (txn.src || "") !== (item.src || "")) return false;
+  const score = merchantSimilarity(txn.desc, item.name);
+  if (score < 0.68) return false;
+  if (score >= 0.92) return true;
+  const txnAmt = Math.abs(Number(txn.amount) || 0);
+  const itemAmt = Math.abs(Number(item.amount) || 0);
+  return Math.abs(txnAmt - itemAmt) <= Math.max(5, itemAmt * 0.35);
+}
+function recurringPlanDeltaForCategory({
+  cat, selectedMonth, selectedYear, recurringItems, checkTxns, ccTxns,
+}) {
+  const actualTxns = [
+    ...checkTxns
+      .filter(t =>
+        t.month === selectedMonth
+        && deriveTxnYear(t, selectedYear) === selectedYear
+        && t.cat === cat
+        && t.cat !== "Transfer"
+        && t.cat !== "Income"
+        && Number(t.amount) > 0
+      )
+      .map(t => ({ ...t, src: "checking" })),
+    ...ccTxns
+      .filter(t =>
+        t.month === selectedMonth
+        && deriveTxnYear(t, selectedYear) === selectedYear
+        && t.cat === cat
+        && Number(t.amount) > 0
+      )
+      .map(t => ({ ...t, src: "cc" })),
+  ];
+  const activeItems = recurringItems
+    .filter(item => item.cat === cat && isRecurringItemActive(item, selectedMonth, selectedYear))
+    .sort((a, b) => {
+      const left = monthYearValue(a.startYear, a.startMonth) ?? 0;
+      const right = monthYearValue(b.startYear, b.startMonth) ?? 0;
+      return left - right;
+    });
+  const usedActualIdx = new Set();
+  return activeItems.reduce((sum, item) => {
+    let bestIdx = -1;
+    let bestScore = 0;
+    actualTxns.forEach((txn, idx) => {
+      if (usedActualIdx.has(idx) || !recurringTxnMatchesItem(txn, item)) return;
+      const score = merchantSimilarity(txn.desc, item.name);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = idx;
+      }
+    });
+    if (bestIdx >= 0) {
+      usedActualIdx.add(bestIdx);
+      return sum;
+    }
+    return sum + Math.abs(Number(item.amount) || 0);
+  }, 0);
+}
 function latestMonthFromTxns(checkTxns = [], ccTxns = []) {
   const all = [...checkTxns, ...ccTxns].map(t => deriveTxnMonth(t)).filter(Boolean);
   const unique = [...new Set(all)];
@@ -6310,6 +6530,9 @@ export default function BudgetDashboardClean() {
   const [oneTimes, setOneTimes] = useState(() => {
     return ls.getJSON("budget_oneTimes", []);
   });
+  const [recurringItems, setRecurringItems] = useState(() => {
+    return ls.getJSON("budget_recurringItems", []);
+  });
   const [budgetKc, setBudgetKc] = useState(() => {
     return ls.getJSON("budget_kc", {});
   });
@@ -6328,6 +6551,7 @@ export default function BudgetDashboardClean() {
   useEffect(() => { ls.setJSON("budget_ccTxns", ccTxns); }, [ccTxns]);
   useEffect(() => { ls.set("budget_takeHome", String(takeHome)); }, [takeHome]);
   useEffect(() => { ls.setJSON("budget_oneTimes", oneTimes); }, [oneTimes]);
+  useEffect(() => { ls.setJSON("budget_recurringItems", recurringItems); }, [recurringItems]);
   useEffect(() => { ls.setJSON("budget_kc", budgetKc); }, [budgetKc]);
   useEffect(() => { ls.set("budget_t2carry", String(t2CarryIn)); }, [t2CarryIn]);
   useEffect(() => { ls.set("budget_groceryGoal", String(groceryGoal)); }, [groceryGoal]);
@@ -6495,7 +6719,7 @@ export default function BudgetDashboardClean() {
     }
   }, [selectedYear]);
 
-  // ── Derived summary rows — norm auto-computed from actual − one-times ──────
+  // ── Derived summary rows — norm auto-computed from actual − one-times + missing recurrings ──────
   const summaryRows = useMemo(() => {
     const baseRows = SUMMARY_ROWS
       .filter(base => {
@@ -6511,12 +6735,20 @@ export default function BudgetDashboardClean() {
           .filter(t => t.month === selectedMonth && t.cat === base.cat)
           .reduce((s, t) => s + t.amount, 0);
         const oneTimeAmt = oneTimes.filter(o => o.cat === base.cat).reduce((s, o) => s + o.amount, 0);
-        const norm = checking + cc - oneTimeAmt;
+        const recurringPlanned = recurringPlanDeltaForCategory({
+          cat: base.cat,
+          selectedMonth,
+          selectedYear,
+          recurringItems,
+          checkTxns,
+          ccTxns,
+        });
+        const norm = checking + cc - oneTimeAmt + recurringPlanned;
         const defaultKc = base.cat === "Giving & Tithe"
           ? (takeHome > 0 ? Math.round(takeHome * 0.10) : base.kc)
           : base.kc;
         const kc = budgetKc[base.cat] !== undefined ? budgetKc[base.cat] : defaultKc;
-        return { ...base, checking, cc, norm, kc };
+        return { ...base, checking, cc, norm, kc, oneTime: oneTimeAmt, recurringPlanned };
       });
     const customRows = customCats.map(c => {
       const checking = checkTxns
@@ -6526,12 +6758,20 @@ export default function BudgetDashboardClean() {
         .filter(t => t.month === selectedMonth && t.cat === c.name)
         .reduce((s, t) => s + t.amount, 0);
       const oneTimeAmt = oneTimes.filter(o => o.cat === c.name).reduce((s, o) => s + o.amount, 0);
-      const norm = checking + cc - oneTimeAmt;
+      const recurringPlanned = recurringPlanDeltaForCategory({
+        cat: c.name,
+        selectedMonth,
+        selectedYear,
+        recurringItems,
+        checkTxns,
+        ccTxns,
+      });
+      const norm = checking + cc - oneTimeAmt + recurringPlanned;
       const kc = budgetKc[c.name] !== undefined ? budgetKc[c.name] : null;
-      return { cat: c.name, icon: c.icon, color: c.color, checking, cc, norm, kc, oneTime: oneTimeAmt, notes: "" };
+      return { cat: c.name, icon: c.icon, color: c.color, checking, cc, norm, kc, oneTime: oneTimeAmt, recurringPlanned, notes: "" };
     });
     return [...baseRows, ...customRows];
-  }, [checkTxns, ccTxns, selectedMonth, oneTimes, budgetKc, showTithe, showABA, customCats, takeHome]);
+  }, [checkTxns, ccTxns, selectedMonth, selectedYear, oneTimes, recurringItems, budgetKc, showTithe, showABA, customCats, takeHome]);
 
   const janActual   = summaryRows.reduce((s, r) => s + r.checking + r.cc, 0);
   const normTotal   = summaryRows.reduce((s, r) => s + r.norm, 0);
@@ -6546,6 +6786,7 @@ export default function BudgetDashboardClean() {
     waterfallDisabled, setWaterfallDisabled,
     takeHome, setTakeHome,
     oneTimes, setOneTimes,
+    recurringItems, setRecurringItems,
     budgetKc, setBudgetKc,
     t2CarryIn, setT2CarryIn,
     groceryGoal, setGroceryGoal,
