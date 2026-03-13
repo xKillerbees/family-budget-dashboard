@@ -146,6 +146,283 @@ function confirmDeleteAction(message) {
   return window.confirm(message || "Delete this item? This cannot be undone.");
 }
 
+function roundMoney(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+function parseMoneyValue(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
+  const cleaned = String(value ?? "")
+    .trim()
+    .replace(/^"|"$/g, "")
+    .replace(/[$,\s]/g, "")
+    .replace(/^\((.+)\)$/, "-$1");
+  if (!cleaned) return NaN;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+function stripCodeFences(text) {
+  return String(text || "").replace(/```json|```/gi, "").trim();
+}
+function extractAnthropicText(data) {
+  return (Array.isArray(data?.content) ? data.content : [])
+    .map(block => block?.type === "text" ? block.text || "" : "")
+    .join("\n")
+    .trim();
+}
+function getStoredAnthropicKey() {
+  try { return localStorage.getItem("budget_apikey") || ""; } catch { return ""; }
+}
+function normalizeTxnSubcategory(value) {
+  return String(value || "").trim();
+}
+function normalizeSubcategoryOptions(options = []) {
+  const list = Array.isArray(options) ? options : [options];
+  const seen = new Set();
+  return list
+    .map(normalizeTxnSubcategory)
+    .filter(Boolean)
+    .filter(option => {
+      const key = option.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+function normalizeSubcategoriesByCat(raw = {}) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw)
+      .map(([cat, options]) => [String(cat || "").trim(), normalizeSubcategoryOptions(options)])
+      .filter(([cat, options]) => cat && options.length),
+  );
+}
+function collectTxnSubcategoriesByCat(txns = []) {
+  const grouped = {};
+  txns.forEach(txn => {
+    const cat = String(txn?.cat || "").trim();
+    const subcat = normalizeTxnSubcategory(txn?.subcat);
+    if (!cat || !subcat) return;
+    grouped[cat] = [...(grouped[cat] || []), subcat];
+  });
+  return normalizeSubcategoriesByCat(grouped);
+}
+function getConfiguredSubcategoryOptions(subcatsByCat = {}, cat = "") {
+  return normalizeSubcategoryOptions(subcatsByCat?.[cat] || []);
+}
+function getCategorySubcategoryOptions(subcatsByCat = {}, cat = "", currentValue = "") {
+  const options = getConfiguredSubcategoryOptions(subcatsByCat, cat);
+  const current = normalizeTxnSubcategory(currentValue);
+  if (!current) return options;
+  return options.some(option => option.toLowerCase() === current.toLowerCase()) ? options : [current, ...options];
+}
+function coerceTxnSubcategoryForCategory(subcatsByCat = {}, cat = "", value = "", { allowLegacy = false } = {}) {
+  const current = normalizeTxnSubcategory(value);
+  if (!current) return "";
+  const options = getConfiguredSubcategoryOptions(subcatsByCat, cat);
+  const match = options.find(option => option.toLowerCase() === current.toLowerCase());
+  if (match) return match;
+  return allowLegacy ? current : "";
+}
+function getReceiptBudgetCats(allCats = []) {
+  const spendCats = allCats.filter(cat => cat !== "Income" && cat !== "Transfer");
+  return spendCats.length ? spendCats : allCats;
+}
+function inferDataUrlMediaType(dataUrl, fallback = "image/jpeg") {
+  const match = String(dataUrl || "").match(/^data:([^;]+);base64,/i);
+  return match?.[1] || fallback;
+}
+function parseFlexibleDateParts(raw, fallbackYear = null) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  let match = text.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (match) {
+    return { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };
+  }
+  match = text.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2}|\d{4}))?$/);
+  if (match) {
+    const rawYear = match[3];
+    const year = rawYear
+      ? (rawYear.length === 4 ? Number(rawYear) : (Number(rawYear) >= 70 ? 1900 + Number(rawYear) : 2000 + Number(rawYear)))
+      : Number(fallbackYear);
+    return {
+      year: Number.isFinite(year) ? year : null,
+      month: Number(match[1]),
+      day: Number(match[2]),
+    };
+  }
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return {
+    year: parsed.getFullYear(),
+    month: parsed.getMonth() + 1,
+    day: parsed.getDate(),
+  };
+}
+function normalizeReceiptDateValue(raw, fallbackYear = null) {
+  const parts = parseFlexibleDateParts(raw, fallbackYear);
+  if (!parts?.month || !parts?.day) return { iso: "", mmdd: "", year: Number.isFinite(fallbackYear) ? Number(fallbackYear) : null };
+  const mm = String(parts.month).padStart(2, "0");
+  const dd = String(parts.day).padStart(2, "0");
+  const year = Number(parts.year);
+  return {
+    iso: Number.isFinite(year) ? `${year}-${mm}-${dd}` : "",
+    mmdd: `${mm}/${dd}`,
+    year: Number.isFinite(year) ? year : null,
+  };
+}
+function distributeReceiptAmounts(items, targetTotal = null) {
+  const cleaned = items
+    .map(item => ({ ...item, amount: Math.abs(Number(item?.amount) || 0) }))
+    .filter(item => item.amount > 0);
+  if (!cleaned.length) return [];
+  const rawCents = cleaned.map(item => Math.max(1, Math.round(item.amount * 100)));
+  const rawTotalCents = rawCents.reduce((sum, cents) => sum + cents, 0);
+  const hintedCents = Math.round(Math.abs(Number(targetTotal) || 0) * 100);
+  const targetCents = hintedCents > 0 ? hintedCents : rawTotalCents;
+  if (targetCents <= 0 || rawTotalCents <= 0) return [];
+  if (targetCents === rawTotalCents) {
+    return cleaned.map((item, idx) => ({ ...item, amount: rawCents[idx] / 100 }));
+  }
+  const scaled = rawCents.map(cents => (cents / rawTotalCents) * targetCents);
+  const floors = scaled.map(value => Math.floor(value));
+  let remainder = targetCents - floors.reduce((sum, cents) => sum + cents, 0);
+  scaled
+    .map((value, idx) => ({ idx, frac: value - floors[idx] }))
+    .sort((left, right) => right.frac - left.frac)
+    .forEach(entry => {
+      if (remainder > 0) {
+        floors[entry.idx] += 1;
+        remainder -= 1;
+      }
+    });
+  return cleaned
+    .map((item, idx) => ({ ...item, amount: floors[idx] / 100 }))
+    .filter(item => item.amount > 0);
+}
+function normalizeReceiptAiResult(raw, {
+  allCats = [],
+  expectedTotal = null,
+  merchantHint = "",
+  dateHint = "",
+  fallbackYear = null,
+} = {}) {
+  const receiptCats = getReceiptBudgetCats(allCats);
+  const fallbackCat = receiptCats.includes("Snacks/Misc") ? "Snacks/Misc" : (receiptCats[0] || "Snacks/Misc");
+  const payload = Array.isArray(raw) ? { items: raw } : (raw && typeof raw === "object" ? raw : {});
+  const merchant = String(payload.merchant || merchantHint || "").trim();
+  const dateInfo = normalizeReceiptDateValue(payload.date || dateHint, fallbackYear);
+  const rawItems = Array.isArray(payload.items)
+    ? payload.items
+    : (Array.isArray(payload.lines) ? payload.lines : (Array.isArray(payload.splits) ? payload.splits : []));
+  const cleanedItems = rawItems
+    .map((item, idx) => {
+      const amount = Math.abs(parseMoneyValue(item?.amount));
+      if (!Number.isFinite(amount) || amount <= 0) return null;
+      const cat = receiptCats.includes(item?.cat) ? item.cat : fallbackCat;
+      const desc = String(item?.desc || item?.name || item?.label || `${merchant || "Receipt"} item ${idx + 1}`).trim();
+      const subcat = normalizeTxnSubcategory(item?.subcat || item?.subcategory);
+      return {
+        desc: desc || `${merchant || "Receipt"} item ${idx + 1}`,
+        amount,
+        cat,
+        subcat,
+      };
+    })
+    .filter(Boolean);
+  if (!cleanedItems.length) throw new Error("No receipt items were returned.");
+  const parsedTotal = Math.abs(parseMoneyValue(payload.total));
+  const hintedTotal = Math.abs(parseMoneyValue(expectedTotal));
+  const targetTotal = (Number.isFinite(hintedTotal) && hintedTotal > 0)
+    ? hintedTotal
+    : ((Number.isFinite(parsedTotal) && parsedTotal > 0) ? parsedTotal : cleanedItems.reduce((sum, item) => sum + item.amount, 0));
+  const items = distributeReceiptAmounts(cleanedItems, targetTotal);
+  if (!items.length) throw new Error("No receipt items were usable.");
+  return {
+    merchant,
+    dateIso: dateInfo.iso,
+    txnDate: dateInfo.mmdd,
+    year: dateInfo.year,
+    total: roundMoney(items.reduce((sum, item) => sum + item.amount, 0)),
+    items,
+  };
+}
+function buildReceiptSplitDesc(merchant, desc) {
+  const cleanMerchant = String(merchant || "").trim();
+  const cleanDesc = String(desc || "").trim();
+  if (!cleanMerchant) return cleanDesc || "Receipt item";
+  if (!cleanDesc) return cleanMerchant;
+  const merchantTokens = buildMerchantSignature(cleanMerchant).tokens || [];
+  const descTokens = buildMerchantSignature(cleanDesc).tokens || [];
+  if (merchantTokens.some(token => descTokens.includes(token))) return cleanDesc;
+  return `${cleanMerchant} ${cleanDesc}`.replace(/\s+/g, " ").trim();
+}
+async function requestReceiptParseFromAI({
+  imageDataUrl,
+  allCats = [],
+  expectedTotal = null,
+  merchantHint = "",
+  dateHint = "",
+  fallbackYear = null,
+} = {}) {
+  const apiKey = getStoredAnthropicKey();
+  if (!apiKey) throw new Error("Set your Anthropic API key in Settings to use AI receipt parsing.");
+  if (!imageDataUrl) throw new Error("Upload a receipt image first.");
+  const receiptCats = getReceiptBudgetCats(allCats);
+  const mediaType = inferDataUrlMediaType(imageDataUrl);
+  const base64 = String(imageDataUrl).split(",")[1];
+  const prompt = `Parse this shopping receipt for a household budget app.
+Allowed budget categories: ${receiptCats.join(", ")}.
+Merchant hint: ${merchantHint || "none"}.
+Date hint: ${dateHint || "none"}.
+Total hint: ${Number.isFinite(Number(expectedTotal)) && Number(expectedTotal) > 0 ? `$${Number(expectedTotal).toFixed(2)}` : "none"}.
+
+Return ONLY strict JSON with this exact shape:
+{"merchant":"Store name","date":"YYYY-MM-DD","total":123.45,"items":[{"desc":"Costco groceries","amount":75.43,"cat":"Groceries"}]}
+
+Rules:
+- Read the merchant, purchase date, and final paid total from the image when visible.
+- Prefer 2 to 10 useful budget split lines instead of every SKU. Group similar items together.
+- Every item amount must be positive.
+- If tax, discounts, or fees appear, distribute them into the final positive item amounts so the item amounts sum exactly to the total.
+- Use only the allowed categories.
+- Make descriptions concise and store-aware.
+- If the image is ambiguous, use the hints as fallback.
+- Do not include markdown, comments, or explanation.`;
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1400,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
+          { type: "text", text: prompt },
+        ],
+      }],
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || data?.error) {
+    throw new Error(data?.error?.message || `AI request failed (${res.status})`);
+  }
+  const rawText = stripCodeFences(extractAnthropicText(data));
+  if (!rawText) throw new Error("AI returned an empty receipt parse.");
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    throw new Error("AI returned invalid receipt JSON.");
+  }
+  return normalizeReceiptAiResult(parsed, { allCats, expectedTotal, merchantHint, dateHint, fallbackYear });
+}
+
 // ── ATOMS ─────────────────────────────────────────────────────────────────────
 const Card = ({children,style,glow,onClick,selected}) => (
   <div onClick={onClick} style={{
@@ -183,20 +460,76 @@ const Slider = ({min,max,step=10,value,onChange,color="#a78bfa"}) => (
 );
 
 // ── CASH FLOW SANKEY ──────────────────────────────────────────────────────────
-function CashFlowSankey({ viewMode }) {
+function CashFlowSankey({ viewMode, breakdown = "category" }) {
   const [hovered, setHovered] = useState(null);
-  const { summaryRows } = useBudget();
+  const { summaryRows, checkTxns, ccTxns, takeHome, selectedMonth, selectedYear } = useBudget();
   const width = useWindowWidth();
   const isMobile = width < 768;
 
-  const categories = summaryRows.map(r => ({
-    name:  r.cat,
-    value: viewMode === "norm" ? r.norm : (r.checking + r.cc),
-    color: r.color,
-    icon:  r.icon,
-  }));
+  const spendTxns = useMemo(() => ([
+    ...checkTxns.filter(t =>
+      t.month === selectedMonth
+      && deriveTxnYear(t, selectedYear) === selectedYear
+      && t.cat !== "Income"
+      && t.cat !== "Transfer"
+      && Number(t.amount) > 0
+    ),
+    ...ccTxns.filter(t =>
+      t.month === selectedMonth
+      && deriveTxnYear(t, selectedYear) === selectedYear
+      && Number(t.amount) > 0
+    ),
+  ]), [checkTxns, ccTxns, selectedMonth, selectedYear]);
 
-  const { takeHome } = useBudget();
+  const categories = useMemo(() => {
+    if (breakdown !== "subcategory") {
+      return summaryRows.map(r => ({
+        id: r.cat,
+        name: r.cat,
+        meta: "",
+        value: viewMode === "norm" ? r.norm : (r.checking + r.cc),
+        color: r.color,
+        icon: r.icon,
+      }));
+    }
+    const actualWeights = new Map();
+    spendTxns.forEach(txn => {
+      const subcat = normalizeTxnSubcategory(txn.subcat) || "Unassigned";
+      const key = `${txn.cat}|||${subcat}`;
+      actualWeights.set(key, (actualWeights.get(key) || 0) + Math.abs(Number(txn.amount) || 0));
+    });
+    const rows = [];
+    summaryRows.forEach(r => {
+      const total = viewMode === "norm" ? r.norm : (r.checking + r.cc);
+      if (total <= 0) return;
+      const weighted = [...actualWeights.entries()]
+        .filter(([key]) => key.startsWith(`${r.cat}|||`))
+        .map(([key, amount]) => ({ desc: key.split("|||")[1], amount }));
+      if (!weighted.length) {
+        rows.push({
+          id: `${r.cat}|||unassigned`,
+          name: "Unassigned",
+          meta: r.cat,
+          value: total,
+          color: r.color,
+          icon: r.icon,
+        });
+        return;
+      }
+      distributeReceiptAmounts(weighted, total).forEach(item => {
+        rows.push({
+          id: `${r.cat}|||${item.desc}`,
+          name: item.desc,
+          meta: r.cat,
+          value: item.amount,
+          color: r.color,
+          icon: r.icon,
+        });
+      });
+    });
+    return rows;
+  }, [breakdown, summaryRows, spendTxns, viewMode]);
+
   const totalIncome = Math.max(0, takeHome || 0);
   const allDest = categories.filter(c => c.value > 0);
   const totalSpend  = allDest.reduce((s, c) => s + c.value, 0);
@@ -266,6 +599,7 @@ function CashFlowSankey({ viewMode }) {
     // S-curve: horizontal tangents at both endpoints
     const mid = (x1 + x2) / 2;
     return {
+      id: d.id,
       name: d.name, color: d.color,
       path:
         `M${x1} ${y1t} C${mid} ${y1t},${mid} ${y2t},${x2} ${y2t}` +
@@ -287,7 +621,7 @@ function CashFlowSankey({ viewMode }) {
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:"auto", maxHeight:"calc(100vh - 220px)", display:"block" }}>
         <defs>
           {allDest.map(d => (
-            <linearGradient key={d.name} id={`sg-${d.name.replace(/[\s&/]/g,"_")}`} x1="0%" y1="0%" x2="100%" y2="0%">
+            <linearGradient key={d.id} id={`sg-${d.id.replace(/[^a-zA-Z0-9_-]/g,"_")}`} x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%"   stopColor={d.color} stopOpacity="0.12"/>
               <stop offset="100%" stopColor={d.color} stopOpacity="0.62"/>
             </linearGradient>
@@ -297,10 +631,10 @@ function CashFlowSankey({ viewMode }) {
         {/* Bands first (behind nodes) */}
         {bands.map((b, i) => (
           <path key={i} d={b.path}
-            fill={hovered===b.name ? b.color : `url(#sg-${b.name.replace(/[\s&/]/g,"_")})`}
-            opacity={hovered===null ? 1 : hovered===b.name ? 0.75 : 0.07}
+            fill={hovered===b.id ? b.color : `url(#sg-${b.id.replace(/[^a-zA-Z0-9_-]/g,"_")})`}
+            opacity={hovered===null ? 1 : hovered===b.id ? 0.75 : 0.07}
             style={{ transition:"opacity .2s", cursor:"pointer" }}
-            onMouseEnter={() => setHovered(b.name)}
+            onMouseEnter={() => setHovered(b.id)}
             onMouseLeave={() => setHovered(null)}
           />
         ))}
@@ -315,10 +649,10 @@ function CashFlowSankey({ viewMode }) {
         {destNodes.map((d, i) => {
           const ly  = labelY[i];
           const mid = d.y + d.h / 2;
-          const isH = hovered === d.name;
+          const isH = hovered === d.id;
           return (
-            <g key={d.name}
-              onMouseEnter={() => setHovered(d.name)}
+            <g key={d.id}
+              onMouseEnter={() => setHovered(d.id)}
               onMouseLeave={() => setHovered(null)}
               style={{ cursor:"pointer" }}>
               {Math.abs(ly - mid) > 4 && (
@@ -335,14 +669,14 @@ function CashFlowSankey({ viewMode }) {
               </text>
               <text x={LABEL_X} y={ly+10}
                 fontFamily={ff} fontSize={destMetaFs} fill={isH ? d.color : "#cbd5e1"}>
-                {fmt(d.value)} ({pctStr(d.value)})
+                {d.meta ? `${d.meta} · ` : ""}{fmt(d.value)} ({pctStr(d.value)})
               </text>
             </g>
           );
         })}
       </svg>
       <div style={{ fontSize:11, color:DIM, textAlign:"center", marginTop:4 }}>
-        Hover a band to highlight · {viewMode==="norm" ? "normalized recurring spend" : "January actual spend"}
+        Hover a band to highlight · {viewMode==="norm" ? "normalized recurring spend" : `${selectedMonth} actual spend`} · {breakdown==="subcategory" ? "subcategory breakdown" : "category breakdown"}
       </div>
     </div>
   );
@@ -352,6 +686,7 @@ function CashFlowSankey({ viewMode }) {
 // ── SUMMARY ───────────────────────────────────────────────────────────────────
 function Summary({wide, isMobile}) {
   const [view, setView] = useState("actual");
+  const [flowBreakdown, setFlowBreakdown] = useState("category");
   const [expandedCat, setExpandedCat] = useState(null);
   const {
     summaryRows, checkTxns, ccTxns, janActual, normTotal, normSurplus, takeHome,
@@ -415,10 +750,26 @@ function Summary({wide, isMobile}) {
       {/* Cash Flow Sankey */}
       <Card>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
-          <Label>Cash Flow · {view==="norm"?"Normalized":"January Actual"}</Label>
-          <div style={{fontSize:11,color:DIM}}>Income → Categories</div>
+          <Label>Cash Flow · {view==="norm"?"Normalized":`${selectedMonth} Actual`}</Label>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",justifyContent:"flex-end"}}>
+            <div style={{fontSize:11,color:DIM}}>Income → {flowBreakdown==="subcategory" ? "Subcategories" : "Categories"}</div>
+            <div style={{display:"flex",gap:6}}>
+              {[["category","Categories"],["subcategory","Subcategories"]].map(([mode,label]) => (
+                <button key={mode} onClick={() => setFlowBreakdown(mode)} style={{
+                  padding:"5px 12px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",
+                  background:flowBreakdown===mode?ACCENT+"22":BG, color:flowBreakdown===mode?ACCENT:MUTED,
+                  border:`1px solid ${flowBreakdown===mode?ACCENT:BORDER}`, transition:"all .15s",
+                }}>{label}</button>
+              ))}
+            </div>
+          </div>
         </div>
-        <CashFlowSankey viewMode={view}/>
+        {flowBreakdown==="subcategory" && view==="norm" && (
+          <div style={{fontSize:11,color:MUTED,marginBottom:10}}>
+            Normalized subcategories are allocated using this month&apos;s actual subcategory mix inside each category.
+          </div>
+        )}
+        <CashFlowSankey viewMode={view} breakdown={flowBreakdown}/>
       </Card>
 
       <div style={{display:"grid",gridTemplateColumns:wide?"1.6fr 1fr":"1fr",gap:16}}>
@@ -1967,16 +2318,30 @@ function CatSelect({ t, src, updateTxnCat }) {
   );
 }
 
+function SubcatSelect({ cat, value, onChange, placeholder = "No subcategory", style, includeCurrent = true }) {
+  const { subcatsByCat } = useBudget();
+  const options = getCategorySubcategoryOptions(subcatsByCat, cat, includeCurrent ? value : "");
+  const normalizedValue = normalizeTxnSubcategory(value);
+  const selectValue = normalizedValue && options.some(option => option.toLowerCase() === normalizedValue.toLowerCase()) ? normalizedValue : "";
+  return (
+    <select value={selectValue} onChange={e => onChange(e.target.value)} style={style}>
+      <option value="">{options.length ? placeholder : "No subcategories"}</option>
+      {options.map(option => <option key={option} value={option} style={{background:"#161b27"}}>{option}</option>)}
+    </select>
+  );
+}
+
 // ── SPLIT TRANSACTION MODAL ───────────────────────────────────────────────────
 function SplitModal({ txn, src, onClose }) {
-  const { replaceTxn, allCats } = useBudget();
+  const { replaceTxn, allCats, subcatsByCat } = useBudget();
+  const receiptCats = getReceiptBudgetCats(allCats);
+  const fallbackSplitCat = receiptCats.includes("Snacks/Misc") ? "Snacks/Misc" : (receiptCats[0] || allCats[0]);
   const [parts, setParts] = useState([
-    { desc: txn.desc, amount: txn.amount, cat: txn.cat },
-    { desc: "", amount: 0, cat: allCats[0] },
+    { desc: txn.desc, amount: txn.amount, cat: txn.cat, subcat: normalizeTxnSubcategory(txn.subcat) },
+    { desc: "", amount: 0, cat: fallbackSplitCat, subcat: "" },
   ]);
   const [parsing, setParsing] = useState(false);
   const [parseErr, setParseErr] = useState(null);
-  const [imgFile, setImgFile] = useState(null);
   const [imgPreview, setImgPreview] = useState(null);
 
   const total = parts.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
@@ -1984,8 +2349,13 @@ function SplitModal({ txn, src, onClose }) {
   const isBalanced = Math.abs(remaining) < 0.01;
 
   const updatePart = (i, field, val) =>
-    setParts(prev => prev.map((p, idx) => idx === i ? { ...p, [field]: val } : p));
-  const addPart = () => setParts(prev => [...prev, { desc: "", amount: 0, cat: allCats[0] }]);
+    setParts(prev => prev.map((p, idx) => {
+      if (idx !== i) return p;
+      const next = { ...p, [field]: val };
+      if (field === "cat") next.subcat = coerceTxnSubcategoryForCategory(subcatsByCat, val, p.subcat);
+      return next;
+    }));
+  const addPart = () => setParts(prev => [...prev, { desc: "", amount: 0, cat: fallbackSplitCat, subcat: "" }]);
   const removePart = (i) => {
     if (!confirmDeleteAction("Remove this split line?")) return;
     setParts(prev => prev.filter((_, idx) => idx !== i));
@@ -1993,7 +2363,6 @@ function SplitModal({ txn, src, onClose }) {
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0]; if (!file) return;
-    setImgFile(file);
     const reader = new FileReader();
     reader.onload = ev => setImgPreview(ev.target.result);
     reader.readAsDataURL(file);
@@ -2001,45 +2370,23 @@ function SplitModal({ txn, src, onClose }) {
   };
 
   const parseReceipt = async () => {
-    const apiKey = (() => { try { return localStorage.getItem("budget_apikey") || ""; } catch { return ""; } })();
-    if (!apiKey) { setParseErr("Set your Anthropic API key in Settings to use AI receipt parsing."); return; }
     if (!imgPreview) { setParseErr("Upload a receipt image first."); return; }
     setParsing(true); setParseErr(null);
     try {
-      const base64 = imgPreview.split(",")[1];
-      const mediaType = imgFile?.type || "image/jpeg";
-      const prompt = `This is a receipt for a purchase totaling $${txn.amount.toFixed(2)} from "${txn.desc}".
-Parse every line item from the receipt image and assign each one to the most appropriate budget category from this list: ${allCats.join(", ")}.
-Return ONLY a valid JSON array with no markdown fences, no explanation, just the array:
-[{"desc":"item name or group","amount":1.23,"cat":"Groceries"}]
-IMPORTANT: The amounts MUST sum to exactly ${txn.amount.toFixed(2)}. Group small items by category if needed.`;
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514", max_tokens: 1024,
-          messages: [{ role: "user", content: [
-            { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
-            { type: "text", text: prompt }
-          ]}]
-        })
+      const parsed = await requestReceiptParseFromAI({
+        imageDataUrl: imgPreview,
+        allCats,
+        expectedTotal: txn.amount,
+        merchantHint: txn.desc,
+        dateHint: txn.date,
+        fallbackYear: deriveTxnYear(txn),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
-      const text = data.content[0].text.trim().replace(/^```[\w]*|```$/gm, "").trim();
-      const parsed = JSON.parse(text);
-      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("No items parsed from receipt");
-      // Normalize so total matches exactly
-      const rawTotal = parsed.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
-      const scale = txn.amount / rawTotal;
-      const normalized = parsed.map((p, i, arr) => {
-        if (i === arr.length - 1) {
-          const soFar = arr.slice(0,-1).reduce((s,x) => s + Math.round(parseFloat(x.amount)*scale*100)/100, 0);
-          return { ...p, amount: Math.round((txn.amount - soFar) * 100) / 100 };
-        }
-        return { ...p, amount: Math.round(parseFloat(p.amount) * scale * 100) / 100 };
-      });
-      setParts(normalized.map(p => ({ desc: p.desc || "", amount: p.amount, cat: allCats.includes(p.cat) ? p.cat : allCats[0] })));
+      setParts(parsed.items.map(item => ({
+        desc: item.desc || "",
+        amount: item.amount,
+        cat: allCats.includes(item.cat) ? item.cat : fallbackSplitCat,
+        subcat: coerceTxnSubcategoryForCategory(subcatsByCat, allCats.includes(item.cat) ? item.cat : fallbackSplitCat, item.subcat),
+      })));
     } catch (e) { setParseErr("Parse failed: " + e.message); }
     setParsing(false);
   };
@@ -2050,6 +2397,7 @@ IMPORTANT: The amounts MUST sum to exactly ${txn.amount.toFixed(2)}. Group small
       desc: p.desc || txn.desc,
       amount: parseFloat(p.amount),
       cat: p.cat,
+      subcat: coerceTxnSubcategoryForCategory(subcatsByCat, p.cat, p.subcat, { allowLegacy: true }),
     }));
     replaceTxn(src, txn.id, splits);
     onClose();
@@ -2090,24 +2438,30 @@ IMPORTANT: The amounts MUST sum to exactly ${txn.amount.toFixed(2)}. Group small
 
         {/* Split rows */}
         <div style={{marginBottom:12}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 90px 130px 28px",gap:6,padding:"0 2px",marginBottom:6}}>
-            {["Description","Amount","Category",""].map(h => <div key={h} style={{fontSize:10,color:DIM,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px"}}>{h}</div>)}
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-            {parts.map((p, i) => (
-              <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 90px 130px 28px",gap:6,alignItems:"center"}}>
-                <input value={p.desc} onChange={e => updatePart(i, "desc", e.target.value)} placeholder={txn.desc}
-                  style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
-                <input type="number" value={p.amount || ""} onChange={e => updatePart(i, "amount", e.target.value)} step="0.01" min="0" placeholder="0.00"
-                  style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%",fontVariantNumeric:"tabular-nums"}}/>
-                <select value={p.cat} onChange={e => updatePart(i, "cat", e.target.value)}
-                  style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 8px",color:TEXT,fontSize:12,outline:"none",width:"100%"}}>
-                  {allCats.map(c => <option key={c} style={{background:"#161b27"}}>{c}</option>)}
-                </select>
-                <button onClick={() => removePart(i)} disabled={parts.length <= 1}
-                  style={{background:"#ef444415",border:"none",borderRadius:6,color:parts.length<=1?BORDER:"#ef4444",fontSize:13,cursor:parts.length<=1?"default":"pointer",padding:"4px 0",width:28,textAlign:"center"}}>✕</button>
+          <div style={{overflowX:"auto"}}>
+            <div style={{minWidth:520}}>
+              <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) 90px 120px 130px 28px",gap:6,padding:"0 2px",marginBottom:6}}>
+                {["Description","Amount","Category","Subcategory",""].map(h => <div key={h} style={{fontSize:10,color:DIM,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px"}}>{h}</div>)}
               </div>
-            ))}
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {parts.map((p, i) => (
+                  <div key={i} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) 90px 120px 130px 28px",gap:6,alignItems:"center"}}>
+                    <input value={p.desc} onChange={e => updatePart(i, "desc", e.target.value)} placeholder={txn.desc}
+                      style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+                    <input type="number" value={p.amount || ""} onChange={e => updatePart(i, "amount", e.target.value)} step="0.01" min="0" placeholder="0.00"
+                      style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%",fontVariantNumeric:"tabular-nums"}}/>
+                    <select value={p.cat} onChange={e => updatePart(i, "cat", e.target.value)}
+                      style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 8px",color:TEXT,fontSize:12,outline:"none",width:"100%"}}>
+                      {allCats.map(c => <option key={c} style={{background:"#161b27"}}>{c}</option>)}
+                    </select>
+                    <SubcatSelect cat={p.cat} value={p.subcat} onChange={val => updatePart(i, "subcat", val)} includeCurrent
+                      style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 8px",color:TEXT,fontSize:12,outline:"none",width:"100%"}}/>
+                    <button onClick={() => removePart(i)} disabled={parts.length <= 1}
+                      style={{background:"#ef444415",border:"none",borderRadius:6,color:parts.length<=1?BORDER:"#ef4444",fontSize:13,cursor:parts.length<=1?"default":"pointer",padding:"4px 0",width:28,textAlign:"center"}}>✕</button>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -2151,12 +2505,12 @@ function TxnTable({ src, isMobile }) {
     checkTxns, ccTxns,
     updateTxnCat, updateTxn, deleteTxn, replaceTxn,
     selectedMonth, selectedYear, availableMonths, addTxns,
-    allCats, catColorsAll, toggleTxnTagging,
+    allCats, catColorsAll, subcatsByCat, toggleTxnTagging,
     mobileTxnActionMenu, oneTimes, setOneTimes, recurringItems, setRecurringItems,
   } = useBudget();
   const [splitTxn, setSplitTxn] = useState(null); // txn being split
   const [editId, setEditId] = useState(null);
-  const [editDraft, setEditDraft] = useState({ date:"", desc:"", amount:"", note:"" });
+  const [editDraft, setEditDraft] = useState({ date:"", desc:"", amount:"", note:"", subcat:"", cat:"" });
   const allTxns = src === "checking" ? checkTxns : ccTxns;
 
   const [monthFilter, setMonthFilter] = useState(selectedMonth);
@@ -2180,7 +2534,7 @@ function TxnTable({ src, isMobile }) {
   const filtered = allTxns
     .filter(t => t.month === monthFilter)
     .filter(t => catFilter === "All" || t.cat === catFilter)
-    .filter(t => !search || t.desc.toLowerCase().includes(search.toLowerCase()) || t.cat.toLowerCase().includes(search.toLowerCase()) || (t.note || "").toLowerCase().includes(search.toLowerCase()))
+    .filter(t => !search || t.desc.toLowerCase().includes(search.toLowerCase()) || t.cat.toLowerCase().includes(search.toLowerCase()) || normalizeTxnSubcategory(t.subcat).toLowerCase().includes(search.toLowerCase()) || (t.note || "").toLowerCase().includes(search.toLowerCase()))
     .slice()
     .sort((a,b) => {
       if (sortBy === "date_asc") return a.date.localeCompare(b.date);
@@ -2200,17 +2554,91 @@ function TxnTable({ src, isMobile }) {
   const [newDesc, setNewDesc] = useState("");
   const [newAmt,  setNewAmt]  = useState("");
   const [newCat,  setNewCat]  = useState(allCats[0]);
+  const [newSubcat, setNewSubcat] = useState("");
   const [addAttempted, setAddAttempted] = useState(false);
   const [addFeedback, setAddFeedback] = useState(null); // {type:"error"|"success", text:string}
+  const [receiptImgPreview, setReceiptImgPreview] = useState(null);
+  const [receiptParsing, setReceiptParsing] = useState(false);
+  const [receiptParseErr, setReceiptParseErr] = useState(null);
+  const [receiptParts, setReceiptParts] = useState([]);
+  const [receiptMeta, setReceiptMeta] = useState({ merchant: "", dateIso: "", total: 0 });
+  const receiptCats = getReceiptBudgetCats(allCats);
+  const fallbackReceiptCat = receiptCats.includes("Snacks/Misc") ? "Snacks/Misc" : (receiptCats[0] || allCats[0]);
   useEffect(() => { if (addFeedback) setAddFeedback(null); }, [monthFilter, catFilter, search, sortBy, showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
+  const receiptAllocatedTotal = roundMoney(receiptParts.reduce((sum, part) => sum + (parseFloat(part.amount) || 0), 0));
+  const enteredReceiptTotal = parseFloat(newAmt);
+  const receiptTargetTotal = receiptParts.length
+    ? (Number.isFinite(enteredReceiptTotal) ? roundMoney(enteredReceiptTotal) : receiptAllocatedTotal)
+    : 0;
+  const receiptRemaining = roundMoney(receiptTargetTotal - receiptAllocatedTotal);
+  const receiptBalanced = !receiptParts.length || Math.abs(receiptRemaining) < 0.01;
+
+  const resetReceiptDraft = () => {
+    setReceiptImgPreview(null);
+    setReceiptParsing(false);
+    setReceiptParseErr(null);
+    setReceiptParts([]);
+    setReceiptMeta({ merchant: "", dateIso: "", total: 0 });
+  };
+
+  const updateReceiptPart = (idx, field, value) => {
+    setReceiptParts(prev => prev.map((part, partIdx) => {
+      if (partIdx !== idx) return part;
+      const next = { ...part, [field]: value };
+      if (field === "cat") next.subcat = coerceTxnSubcategoryForCategory(subcatsByCat, value, part.subcat);
+      return next;
+    }));
+  };
+  const addReceiptPart = () => setReceiptParts(prev => [...prev, { desc: "", amount: 0, cat: fallbackReceiptCat, subcat: "" }]);
+  const removeReceiptPart = (idx) => {
+    if (!confirmDeleteAction("Remove this receipt split line?")) return;
+    setReceiptParts(prev => prev.filter((_, partIdx) => partIdx !== idx));
+  };
+  const handleReceiptUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setReceiptParseErr(null);
+    const reader = new FileReader();
+    reader.onload = ev => setReceiptImgPreview(String(ev.target?.result || ""));
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+  const parseReceiptForAdd = async () => {
+    if (!receiptImgPreview) { setReceiptParseErr("Upload a receipt image first."); return; }
+    setReceiptParsing(true);
+    setReceiptParseErr(null);
+    setAddFeedback(null);
+    try {
+      const parsed = await requestReceiptParseFromAI({
+        imageDataUrl: receiptImgPreview,
+        allCats,
+        expectedTotal: parseFloat(newAmt),
+        merchantHint: newDesc,
+        dateHint: newDate,
+        fallbackYear: selectedYear,
+      });
+      setReceiptMeta({ merchant: parsed.merchant || "", dateIso: parsed.dateIso || "", total: parsed.total || 0 });
+      setReceiptParts(parsed.items.map(item => ({
+        desc: item.desc || "",
+        amount: item.amount,
+        cat: allCats.includes(item.cat) ? item.cat : fallbackReceiptCat,
+        subcat: coerceTxnSubcategoryForCategory(subcatsByCat, allCats.includes(item.cat) ? item.cat : fallbackReceiptCat, item.subcat),
+      })));
+      if (!newDesc.trim() && parsed.merchant) setNewDesc(parsed.merchant);
+      if (!newDate && parsed.dateIso) setNewDate(parsed.dateIso);
+      if ((newAmt === "" || Number.isNaN(parseFloat(newAmt))) && parsed.total > 0) setNewAmt(parsed.total.toFixed(2));
+    } catch (err) {
+      setReceiptParseErr("Parse failed: " + err.message);
+    }
+    setReceiptParsing(false);
+  };
 
   const submitManual = () => {
     setAddAttempted(true);
-    const amount = parseFloat(newAmt);
     const missing = [];
     if (!newDate) missing.push("Date");
-    if (!newDesc.trim()) missing.push("Description");
-    if (Number.isNaN(amount)) missing.push("Amount");
+    if (!receiptParts.length && !newDesc.trim()) missing.push("Description");
+    if (!receiptParts.length && Number.isNaN(parseFloat(newAmt))) missing.push("Amount");
     if (missing.length) {
       setAddFeedback({ type: "error", text: `Required: ${missing.join(", ")}` });
       return;
@@ -2225,8 +2653,57 @@ function TxnTable({ src, isMobile }) {
     const monthIdx = Math.max(0, Math.min(11, Number(mm) - 1));
     const month = APP_MONTHS[monthIdx] || selectedMonth;
     const date = `${mm}/${dd}`;
-    addTxns(src, [{ date, desc: newDesc.trim(), amount, cat: newCat, month, note: "" }]);
-    setNewDesc(""); setNewAmt(""); setNewDate("");
+    if (receiptParts.length) {
+      if (!receiptBalanced) {
+        setAddFeedback({ type: "error", text: `Receipt split must match ${money2(receiptTargetTotal)} before saving.` });
+        return;
+      }
+      const merchantLabel = newDesc.trim() || receiptMeta.merchant || "";
+      const cleanedParts = receiptParts
+        .map((part, idx) => {
+          const amount = roundMoney(parseFloat(part.amount));
+          if (!Number.isFinite(amount) || amount <= 0) return null;
+          return {
+            desc: buildReceiptSplitDesc(merchantLabel, String(part.desc || "").trim() || `item ${idx + 1}`),
+            amount,
+            cat: allCats.includes(part.cat) ? part.cat : fallbackReceiptCat,
+            subcat: coerceTxnSubcategoryForCategory(subcatsByCat, allCats.includes(part.cat) ? part.cat : fallbackReceiptCat, part.subcat),
+          };
+        })
+        .filter(Boolean);
+      if (!cleanedParts.length) {
+        setAddFeedback({ type: "error", text: "Receipt split has no valid lines to save." });
+        return;
+      }
+      const splitParentDesc = merchantLabel || "Receipt purchase";
+      const splitParentAmount = roundMoney(receiptTargetTotal > 0 ? receiptTargetTotal : cleanedParts.reduce((sum, part) => sum + part.amount, 0));
+      const splitGroupId = cleanedParts.length > 1 ? makeTxnId("sg", new Set()) : "";
+      addTxns(src, cleanedParts.map(part => ({
+        date,
+        desc: part.desc,
+        amount: part.amount,
+        cat: part.cat,
+        subcat: part.subcat,
+        month,
+        note: "",
+        ...(cleanedParts.length > 1 ? {
+          splitGroupId,
+          splitParentId: splitGroupId,
+          splitParentDesc,
+          splitParentAmount,
+        } : {}),
+      })));
+      setNewDesc(""); setNewAmt(""); setNewDate(""); setNewCat(allCats[0]); setNewSubcat("");
+      resetReceiptDraft();
+      setAddAttempted(false);
+      setAddFeedback({ type: "success", text: `Saved ${cleanedParts.length} split transactions to ${month}.` });
+      setShowAdd(false);
+      return;
+    }
+    const amount = parseFloat(newAmt);
+    addTxns(src, [{ date, desc: newDesc.trim(), amount, cat: newCat, subcat: coerceTxnSubcategoryForCategory(subcatsByCat, newCat, newSubcat), month, note: "" }]);
+    setNewDesc(""); setNewAmt(""); setNewDate(""); setNewCat(allCats[0]); setNewSubcat("");
+    resetReceiptDraft();
     setAddAttempted(false);
     setAddFeedback({ type: "success", text: `Saved transaction to ${month}.` });
     setShowAdd(false);
@@ -2234,18 +2711,34 @@ function TxnTable({ src, isMobile }) {
 
   const beginEdit = (t) => {
     setEditId(t.id);
-    setEditDraft({ date: t.date || "", desc: t.desc || "", amount: String(t.amount ?? ""), note: t.note || "" });
+    setEditDraft({ date: t.date || "", desc: t.desc || "", amount: String(t.amount ?? ""), note: t.note || "", subcat: normalizeTxnSubcategory(t.subcat), cat: t.cat || "" });
   };
   const cancelEdit = () => {
     setEditId(null);
-    setEditDraft({ date:"", desc:"", amount:"", note:"" });
+    setEditDraft({ date:"", desc:"", amount:"", note:"", subcat:"", cat:"" });
   };
   const saveEdit = () => {
     const amt = parseFloat(editDraft.amount);
     if (!editId || !editDraft.desc.trim() || Number.isNaN(amt)) return;
-    updateTxn(src, editId, { date: editDraft.date.trim(), desc: editDraft.desc.trim(), amount: amt, note: editDraft.note || "" });
+    updateTxn(src, editId, {
+      date: editDraft.date.trim(),
+      desc: editDraft.desc.trim(),
+      amount: amt,
+      note: editDraft.note || "",
+      subcat: coerceTxnSubcategoryForCategory(subcatsByCat, editDraft.cat, editDraft.subcat, { allowLegacy: true }),
+    });
     cancelEdit();
   };
+  useEffect(() => {
+    if (!editId) return;
+    const currentTxn = allTxns.find(t => t.id === editId);
+    if (!currentTxn || currentTxn.cat === editDraft.cat) return;
+    setEditDraft(prev => ({
+      ...prev,
+      cat: currentTxn.cat || "",
+      subcat: normalizeTxnSubcategory(currentTxn.subcat),
+    }));
+  }, [editId, editDraft.cat, allTxns]);
 
   const isOneTimeTxn = useCallback((t) => {
     const hasNoteFlag = hasTxnNoteFlag(t.note, "ONE-TIME");
@@ -2379,35 +2872,143 @@ function TxnTable({ src, isMobile }) {
       {showAdd && (
         <Card glow={ACCENT}>
           <Label>➕ New Transaction</Label>
-          <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"flex-end"}}>
-            <div style={{display:"flex",flexDirection:"column",gap:4,flex:"0 0 140px"}}>
-              <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Date</span>
-              <input type="date" value={newDate} onChange={e=>{ setNewDate(e.target.value); if (addFeedback) setAddFeedback(null); }}
-                style={{background:BG,border:`1px solid ${addAttempted && !newDate ? "#ef4444" : BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%",colorScheme:"dark"}}/>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"flex-end"}}>
+              <div style={{display:"flex",flexDirection:"column",gap:4,flex:"0 0 140px"}}>
+                <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Date</span>
+                <input type="date" value={newDate} onChange={e=>{ setNewDate(e.target.value); if (addFeedback) setAddFeedback(null); }}
+                  style={{background:BG,border:`1px solid ${addAttempted && !newDate ? "#ef4444" : BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%",colorScheme:"dark"}}/>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:4,flex:"1 1 160px"}}>
+                <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Description</span>
+                <input value={newDesc} onChange={e=>{ setNewDesc(e.target.value); if (addFeedback) setAddFeedback(null); }} placeholder="Merchant or payee"
+                  style={{background:BG,border:`1px solid ${addAttempted && !receiptParts.length && !newDesc.trim() ? "#ef4444" : BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:4,flex:"0 0 100px"}}>
+                <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Amount ($)</span>
+                <input type="number" value={newAmt} onChange={e=>{ setNewAmt(e.target.value); if (addFeedback) setAddFeedback(null); }} placeholder="0.00" step="0.01"
+                  style={{background:BG,border:`1px solid ${addAttempted && !receiptParts.length && Number.isNaN(parseFloat(newAmt)) ? "#ef4444" : BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:4,flex:"1 1 140px"}}>
+                <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Category</span>
+                <select value={newCat} onChange={e=>{ const nextCat = e.target.value; setNewCat(nextCat); setNewSubcat(prev => coerceTxnSubcategoryForCategory(subcatsByCat, nextCat, prev)); if (addFeedback) setAddFeedback(null); }}
+                  style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}>
+                  {allCats.map(c=><option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:4,flex:"1 1 140px"}}>
+                <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Subcategory</span>
+                <SubcatSelect cat={newCat} value={newSubcat} onChange={val=>{ setNewSubcat(val); if (addFeedback) setAddFeedback(null); }} includeCurrent={false}
+                  style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+              </div>
+              <button onClick={submitManual}
+                style={{padding:"8px 20px",borderRadius:8,background:ACCENT,color:"#0d1117",fontWeight:800,fontSize:13,border:"none",cursor:"pointer",flexShrink:0,alignSelf:"flex-end"}}>
+                {receiptParts.length ? `Save ${receiptParts.length} Split${receiptParts.length === 1 ? "" : "s"}` : "Save"}
+              </button>
             </div>
-            <div style={{display:"flex",flexDirection:"column",gap:4,flex:"1 1 160px"}}>
-              <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Description</span>
-              <input value={newDesc} onChange={e=>{ setNewDesc(e.target.value); if (addFeedback) setAddFeedback(null); }} placeholder="Merchant or payee"
-                style={{background:BG,border:`1px solid ${addAttempted && !newDesc.trim() ? "#ef4444" : BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+
+            <div style={{fontSize:11,color:MUTED}}>
+              Date is required and determines the month automatically. Use a negative amount for credits/refunds. When a receipt split is present, the header category and subcategory are ignored and each parsed row saves separately.
             </div>
-            <div style={{display:"flex",flexDirection:"column",gap:4,flex:"0 0 100px"}}>
-              <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Amount ($)</span>
-              <input type="number" value={newAmt} onChange={e=>{ setNewAmt(e.target.value); if (addFeedback) setAddFeedback(null); }} placeholder="0.00" step="0.01"
-                style={{background:BG,border:`1px solid ${addAttempted && Number.isNaN(parseFloat(newAmt)) ? "#ef4444" : BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+
+            <div style={{background:BG,borderRadius:12,padding:"14px 16px",border:`1px solid #06b6d422`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:8}}>
+                <div>
+                  <div style={{fontSize:12,fontWeight:700,color:"#06b6d4",marginBottom:4}}>📷 AI Receipt Upload (optional)</div>
+                  <div style={{fontSize:11,color:MUTED}}>Upload a Costco or store receipt and AI will build editable split lines for you.</div>
+                </div>
+                {receiptParts.length > 0 && (
+                  <button onClick={() => { setReceiptParts([]); setReceiptParseErr(null); }}
+                    style={{padding:"6px 10px",borderRadius:8,background:"#33415522",color:MUTED,border:`1px solid ${BORDER}`,fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                    Clear Split
+                  </button>
+                )}
+              </div>
+              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                <label style={{padding:"7px 14px",borderRadius:8,background:"#06b6d422",color:"#06b6d4",border:"1px solid #06b6d444",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                  📷 {receiptImgPreview ? "Change Receipt" : "Upload Receipt"}
+                  <input type="file" accept="image/*" capture="environment" onChange={handleReceiptUpload} style={{display:"none"}}/>
+                </label>
+                {receiptImgPreview && (
+                  <button onClick={parseReceiptForAdd} disabled={receiptParsing}
+                    style={{padding:"7px 14px",borderRadius:8,background:receiptParsing?"#1e2535":"#8b5cf622",color:receiptParsing?MUTED:"#8b5cf6",border:`1px solid ${receiptParsing?"#1e2535":"#8b5cf644"}`,fontSize:12,fontWeight:700,cursor:receiptParsing?"default":"pointer",whiteSpace:"nowrap"}}>
+                    {receiptParsing ? "⏳ Parsing receipt…" : receiptParts.length ? "✨ Re-parse Receipt" : "✨ Parse with AI"}
+                  </button>
+                )}
+                {receiptImgPreview && (
+                  <button onClick={resetReceiptDraft}
+                    style={{padding:"7px 12px",borderRadius:8,background:"#33415522",color:MUTED,border:`1px solid ${BORDER}`,fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                    Remove Receipt
+                  </button>
+                )}
+                {receiptImgPreview && <img src={receiptImgPreview} alt="receipt preview" style={{height:48,borderRadius:6,border:`1px solid ${BORDER}`,objectFit:"cover"}}/>}
+              </div>
+              {(receiptMeta.merchant || receiptMeta.dateIso || receiptMeta.total > 0) && (
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
+                  {receiptMeta.merchant && <Tag color="#06b6d4">{receiptMeta.merchant}</Tag>}
+                  {receiptMeta.dateIso && <Tag color="#8b5cf6">{receiptMeta.dateIso}</Tag>}
+                  {receiptMeta.total > 0 && <Tag color="#22c55e">{money2(receiptMeta.total)}</Tag>}
+                </div>
+              )}
+              {receiptParseErr && <div style={{fontSize:11,color:"#f59e0b",marginTop:8,padding:"6px 10px",background:"#f59e0b11",borderRadius:6}}>{receiptParseErr}</div>}
             </div>
-            <div style={{display:"flex",flexDirection:"column",gap:4,flex:"1 1 140px"}}>
-              <span style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Category</span>
-              <select value={newCat} onChange={e=>{ setNewCat(e.target.value); if (addFeedback) setAddFeedback(null); }}
-                style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}>
-                {allCats.map(c=><option key={c}>{c}</option>)}
-              </select>
-            </div>
-            <button onClick={submitManual}
-              style={{padding:"8px 20px",borderRadius:8,background:ACCENT,color:"#0d1117",fontWeight:800,fontSize:13,border:"none",cursor:"pointer",flexShrink:0,alignSelf:"flex-end"}}>
-              Save
-            </button>
+
+            {receiptParts.length > 0 && (
+              <>
+                <div style={{marginTop:2}}>
+                  <div style={{overflowX:"auto"}}>
+                    <div style={{minWidth:650}}>
+                      <div style={{display:"grid",gridTemplateColumns:"minmax(170px,1fr) 96px 150px 130px 28px",gap:6,padding:"0 2px",marginBottom:6}}>
+                        {["Receipt Split","Amount","Category","Subcategory",""].map(h => (
+                          <div key={h} style={{fontSize:10,color:DIM,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px"}}>{h}</div>
+                        ))}
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                        {receiptParts.map((part, idx) => (
+                          <div key={idx} style={{display:"grid",gridTemplateColumns:"minmax(170px,1fr) 96px 150px 130px 28px",gap:6,alignItems:"center"}}>
+                            <input value={part.desc} onChange={e => updateReceiptPart(idx, "desc", e.target.value)} placeholder={newDesc || "Receipt item"}
+                              style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%"}}/>
+                            <input type="number" step="0.01" min="0" value={part.amount || ""} onChange={e => updateReceiptPart(idx, "amount", e.target.value)}
+                              style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none",width:"100%",fontVariantNumeric:"tabular-nums"}}/>
+                            <select value={part.cat} onChange={e => updateReceiptPart(idx, "cat", e.target.value)}
+                              style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 8px",color:TEXT,fontSize:12,outline:"none",width:"100%"}}>
+                              {allCats.map(cat => <option key={cat} style={{background:"#161b27"}}>{cat}</option>)}
+                            </select>
+                            <SubcatSelect cat={part.cat} value={part.subcat} onChange={val => updateReceiptPart(idx, "subcat", val)} includeCurrent={false}
+                              style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 8px",color:TEXT,fontSize:12,outline:"none",width:"100%"}}/>
+                            <button onClick={() => removeReceiptPart(idx)} disabled={receiptParts.length <= 1}
+                              style={{background:"#ef444415",border:"none",borderRadius:6,color:receiptParts.length<=1?BORDER:"#ef4444",fontSize:13,cursor:receiptParts.length<=1?"default":"pointer",padding:"4px 0",width:28,textAlign:"center"}}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <button onClick={addReceiptPart}
+                    style={{background:"transparent",border:`1px dashed ${BORDER}`,borderRadius:8,color:MUTED,fontSize:12,cursor:"pointer",padding:"7px 14px",fontFamily:"inherit"}}>
+                    + Add Split Line
+                  </button>
+                  <div style={{fontSize:11,color:MUTED,alignSelf:"center"}}>Parsed lines save as separate transactions on the selected date.</div>
+                </div>
+
+                <div style={{background:BG,borderRadius:10,padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",border:`1px solid ${receiptBalanced?"#22c55e33":receiptRemaining!==receiptTargetTotal?"#f59e0b33":BORDER}`}}>
+                  <div>
+                    <div style={{fontSize:11,color:MUTED}}>Split total</div>
+                    <div style={{fontSize:16,fontWeight:900,color:receiptBalanced?"#22c55e":"#f59e0b",fontVariantNumeric:"tabular-nums"}}>{money2(receiptAllocatedTotal)}</div>
+                  </div>
+                  {!receiptBalanced && (
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:11,color:MUTED}}>Difference vs amount field</div>
+                      <div style={{fontSize:14,fontWeight:800,color:"#f59e0b",fontVariantNumeric:"tabular-nums"}}>{receiptRemaining > 0 ? "+" : ""}{money2(receiptRemaining)}</div>
+                    </div>
+                  )}
+                  {receiptBalanced && <div style={{fontSize:13,color:"#22c55e",fontWeight:700}}>✓ Ready to save</div>}
+                </div>
+              </>
+            )}
           </div>
-          <div style={{fontSize:11,color:MUTED,marginTop:8}}>Date is required and determines the month automatically. Use a negative amount for credits/refunds.</div>
         </Card>
       )}
 
@@ -2579,11 +3180,14 @@ function TxnTable({ src, isMobile }) {
                           </div>
                           <input value={editDraft.note} onChange={e=>setEditDraft(d=>({...d,note:e.target.value}))} placeholder="Note (optional)"
                             style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
+                          <SubcatSelect cat={t.cat} value={editDraft.subcat} onChange={val=>setEditDraft(d=>({...d,subcat:val}))} includeCurrent
+                            style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
                         </div>
                       ) : (
                         <>
                           <div style={{fontSize:14,fontWeight:500,color:isIncome?"#22c55e":TEXT,lineHeight:1.3}}>
                             {t.desc}
+                            {normalizeTxnSubcategory(t.subcat)&&<span style={{marginLeft:6}}><Tag color={catColor}>{normalizeTxnSubcategory(t.subcat)}</Tag></span>}
                             {isRecurring&&<span style={{marginLeft:6}}><Tag color="#22c55e">recurring</Tag></span>}
                             {isOneTime&&<span style={{marginLeft:6}}><Tag color="#f59e0b">one-time</Tag></span>}
                             {t.excludeFromTags&&<span style={{marginLeft:6}}><Tag color="#f59e0b">excluded</Tag></span>}
@@ -2621,6 +3225,7 @@ function TxnTable({ src, isMobile }) {
                 const isOneTime=isOneTimeTxn(t);
                 const isRecurring=isRecurringTxn(t);
                 const isEditing = editId === t.id;
+                const catColor = catColorsAll[t.cat] || MUTED;
                 return (
                   <div key={t.id || `${src}-${i}`} style={{display:"grid",gridTemplateColumns:desktopTxnCols,columnGap:10,padding:"10px 16px",borderBottom:`1px solid ${BORDER}`,background:isIncome?"#22c55e07":isTransfer?"#33415507":i%2===0?SURFACE:BG,opacity:isTransfer?.5:1,minWidth:desktopTxnMinW}}>
                     <div style={{fontSize:12,color:MUTED,alignSelf:"center"}}>
@@ -2634,13 +3239,15 @@ function TxnTable({ src, isMobile }) {
                         <div style={{display:"flex",flexDirection:"column",gap:5}}>
                           <input value={editDraft.desc} onChange={e=>setEditDraft(d=>({...d,desc:e.target.value}))}
                             style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:12,outline:"none"}}/>
+                          <SubcatSelect cat={t.cat} value={editDraft.subcat} onChange={val=>setEditDraft(d=>({...d,subcat:val}))} includeCurrent
+                            style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:11,outline:"none"}}/>
                           <input value={editDraft.note} onChange={e=>setEditDraft(d=>({...d,note:e.target.value}))} placeholder="Note (optional)"
                             style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:6,padding:"4px 6px",color:TEXT,fontSize:11,outline:"none"}}/>
                         </div>
                       ) : (
                         <>
                           <div style={{fontSize:13,color:isIncome?"#22c55e":TEXT,fontWeight:isIncome?700:400,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                            {t.desc}{isRecurring&&<Tag color="#22c55e">recurring</Tag>}{isOneTime&&<Tag color="#f59e0b">one-time</Tag>}
+                            {t.desc}{normalizeTxnSubcategory(t.subcat)&&<Tag color={catColor}>{normalizeTxnSubcategory(t.subcat)}</Tag>}{isRecurring&&<Tag color="#22c55e">recurring</Tag>}{isOneTime&&<Tag color="#f59e0b">one-time</Tag>}
                             {t.excludeFromTags&&<Tag color="#f59e0b">excluded</Tag>}
                           </div>
                           {getTxnDisplayNote(t.note)&&<div style={{fontSize:11,color:DIM,marginTop:2}}>{getTxnDisplayNote(t.note)}</div>}
@@ -4302,6 +4909,12 @@ function Trends({ wide, isMobile }) {
       .slice(0, 5)
       .filter(r => r.total > 0);
   }, [hasMultiple, summaryRows, demoTrendData]);
+  const comparisonLabelWidth = isMobile ? 188 : 180;
+  const comparisonValueWidth = isMobile ? 112 : 96;
+  const comparisonGrid = `${comparisonLabelWidth}px repeat(${availableMonths.length}, minmax(${comparisonValueWidth}px, 1fr))`;
+  const comparisonMinWidth = comparisonLabelWidth + (availableMonths.length * comparisonValueWidth);
+  const comparisonPadding = isMobile ? "10px 12px" : "10px 16px";
+  const stickyColumnShadow = "10px 0 18px #02061740";
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -4462,38 +5075,43 @@ function Trends({ wide, isMobile }) {
             <div style={{padding:"12px 16px",borderBottom:`1px solid ${BORDER}`}}>
               <Label style={{marginBottom:0}}>Side-by-Side Comparison</Label>
             </div>
-            {/* Header row */}
-            <div style={{display:"grid",gridTemplateColumns:`180px repeat(${availableMonths.length},1fr)`,padding:"8px 16px",background:BG,borderBottom:`1px solid ${BORDER}`}}>
-              <div style={{fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:".5px"}}>Category</div>
-              {availableMonths.map(m=>(
-                <div key={m} style={{fontSize:10,fontWeight:700,color:m===selectedMonth?ACCENT:MUTED,textTransform:"uppercase",letterSpacing:".5px",textAlign:"right"}}>{m.slice(0,3)}</div>
-              ))}
-            </div>
-            {summaryRows.map((r,i)=>(
-              <div key={r.cat} style={{display:"grid",gridTemplateColumns:`180px repeat(${availableMonths.length},1fr)`,padding:"9px 16px",borderBottom:`1px solid ${BORDER}`,background:i%2===0?SURFACE:BG,alignItems:"center"}}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <div style={{width:8,height:8,borderRadius:2,background:r.color,flexShrink:0}}/>
-                  <span style={{fontSize:12,color:TEXT}}>{r.cat}</span>
-                </div>
-                {availableMonths.map((m,mi)=>{
-                  const val = trendData[mi]?.[r.cat]||0;
-                  const prev = mi>0 ? (trendData[mi-1]?.[r.cat]||0) : null;
-                  const delta = prev!==null ? val-prev : 0;
-                  return (
-                    <div key={m} style={{textAlign:"right"}}>
-                      <div style={{fontSize:12,fontWeight:700,color:m===selectedMonth?TEXT:MUTED,fontVariantNumeric:"tabular-nums"}}>{val>0?fmt(val):"—"}</div>
-                      {mi>0&&val>0&&<div style={{fontSize:10,color:delta>0?"#ef4444":"#22c55e",fontVariantNumeric:"tabular-nums"}}>{delta>0?"+":""}{fmt(delta)}</div>}
-                    </div>
-                  );
-                })}
+            <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+              {/* Header row */}
+              <div style={{display:"grid",gridTemplateColumns:comparisonGrid,padding:comparisonPadding,background:BG,borderBottom:`1px solid ${BORDER}`,minWidth:comparisonMinWidth}}>
+                <div style={{fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:".5px",position:"sticky",left:0,background:BG,zIndex:3,boxShadow:stickyColumnShadow}}>Category</div>
+                {availableMonths.map(m=>(
+                  <div key={m} style={{fontSize:10,fontWeight:700,color:m===selectedMonth?ACCENT:MUTED,textTransform:"uppercase",letterSpacing:".5px",textAlign:"right"}}>{m.slice(0,3)}</div>
+                ))}
               </div>
-            ))}
-            {/* Totals */}
-            <div style={{display:"grid",gridTemplateColumns:`180px repeat(${availableMonths.length},1fr)`,padding:"10px 16px",background:BG,borderTop:`2px solid ${BORDER}`}}>
-              <div style={{fontSize:12,fontWeight:800,color:MUTED}}>Total</div>
-              {trendData.map((d,i)=>(
-                <div key={i} style={{textAlign:"right",fontSize:13,fontWeight:900,color:availableMonths[i]===selectedMonth?ACCENT:MUTED,fontVariantNumeric:"tabular-nums"}}>{fmt(d._total)}</div>
-              ))}
+              {summaryRows.map((r,i)=>{
+                const rowBg = i%2===0?SURFACE:BG;
+                return (
+                  <div key={r.cat} style={{display:"grid",gridTemplateColumns:comparisonGrid,padding:isMobile?"11px 12px":"9px 16px",borderBottom:`1px solid ${BORDER}`,background:rowBg,alignItems:"center",minWidth:comparisonMinWidth}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,position:"sticky",left:0,background:rowBg,zIndex:2,boxShadow:stickyColumnShadow,paddingRight:12}}>
+                      <div style={{width:8,height:8,borderRadius:2,background:r.color,flexShrink:0}}/>
+                      <span style={{fontSize:isMobile?11:12,color:TEXT}}>{r.cat}</span>
+                    </div>
+                    {availableMonths.map((m,mi)=>{
+                      const val = trendData[mi]?.[r.cat]||0;
+                      const prev = mi>0 ? (trendData[mi-1]?.[r.cat]||0) : null;
+                      const delta = prev!==null ? val-prev : 0;
+                      return (
+                        <div key={m} style={{textAlign:"right"}}>
+                          <div style={{fontSize:isMobile?11:12,fontWeight:700,color:m===selectedMonth?TEXT:MUTED,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{val>0?fmt(val):"—"}</div>
+                          {mi>0&&val>0&&<div style={{fontSize:10,color:delta>0?"#ef4444":"#22c55e",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{delta>0?"+":""}{fmt(delta)}</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+              {/* Totals */}
+              <div style={{display:"grid",gridTemplateColumns:comparisonGrid,padding:comparisonPadding,background:BG,borderTop:`2px solid ${BORDER}`,minWidth:comparisonMinWidth}}>
+                <div style={{fontSize:12,fontWeight:800,color:MUTED,position:"sticky",left:0,background:BG,zIndex:3,boxShadow:stickyColumnShadow}}>Total</div>
+                {trendData.map((d,i)=>(
+                  <div key={i} style={{textAlign:"right",fontSize:13,fontWeight:900,color:availableMonths[i]===selectedMonth?ACCENT:MUTED,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{fmt(d._total)}</div>
+                ))}
+              </div>
             </div>
           </Card>
         </>
@@ -4655,6 +5273,7 @@ function Settings({ isMobile }) {
     hideZeroSummaryCats, setHideZeroSummaryCats,
     mobileTxnActionMenu, setMobileTxnActionMenu,
     customCats, setCustomCats, allCats,
+    subcatsByCat, setSubcatsByCat,
     abaSettings, setAbaSettings,
     titheSettings, setTitheSettings,
     retargetCat,
@@ -4668,6 +5287,11 @@ function Settings({ isMobile }) {
     if (txnCount === 0) {
       if (!confirmDeleteAction(`Delete category \"${catName}\"?`)) return;
       setCustomCats(prev => prev.filter(c => c.name !== catName));
+      setSubcatsByCat(prev => {
+        const next = { ...prev };
+        delete next[catName];
+        return next;
+      });
     } else {
       // Has transactions — require move-to selection
       const firstOther = allCats.find(c => c !== catName) || "";
@@ -4681,6 +5305,11 @@ function Settings({ isMobile }) {
     if (!confirmDeleteAction(`Move transactions to "${moveTo}" and delete "${deletingCat}"?`)) return;
     retargetCat(deletingCat, moveTo);
     setCustomCats(prev => prev.filter(c => c.name !== deletingCat));
+    setSubcatsByCat(prev => {
+      const next = { ...prev };
+      delete next[deletingCat];
+      return next;
+    });
     setDeletingCat(null);
     setMoveTo("");
   };
@@ -4691,6 +5320,8 @@ function Settings({ isMobile }) {
   const [otDesc, setOtDesc]       = useState("");
   const [otAmt, setOtAmt]         = useState("");
   const [otCat, setOtCat]         = useState(allCats[0]);
+  const [subcatCat, setSubcatCat] = useState(() => allCats.find(c => c !== "Income" && c !== "Transfer") || allCats[0] || "");
+  const [subcatInput, setSubcatInput] = useState("");
   const [confirmClear, setConfirmClear] = useState(null);
   const [importErr, setImportErr] = useState(null);
   const [apiKeyInput, setApiKeyInput] = useState(() => { try { return localStorage.getItem("budget_apikey") || ""; } catch { return ""; } });
@@ -4701,8 +5332,32 @@ function Settings({ isMobile }) {
   ].filter(isSpendTxn), [checkTxns, ccTxns]);
   const saveApiKey = () => { try { localStorage.setItem("budget_apikey", apiKeyInput); setApiKeySaved(true); setTimeout(() => setApiKeySaved(false), 2000); } catch {} };
   useEffect(() => { setFamilyInput(familySize || 4); }, [familySize]);
+  useEffect(() => {
+    if (!allCats.includes(subcatCat)) setSubcatCat(allCats.find(c => c !== "Income" && c !== "Transfer") || allCats[0] || "");
+  }, [allCats, subcatCat]);
 
   const accentSet = "#a78bfa";
+  const activeSubcats = getConfiguredSubcategoryOptions(subcatsByCat, subcatCat);
+
+  const addSubcategoryOption = () => {
+    const name = normalizeTxnSubcategory(subcatInput);
+    if (!subcatCat || !name) return;
+    setSubcatsByCat(prev => ({
+      ...prev,
+      [subcatCat]: normalizeSubcategoryOptions([...(prev[subcatCat] || []), name]),
+    }));
+    setSubcatInput("");
+  };
+  const removeSubcategoryOption = (cat, subcat) => {
+    setSubcatsByCat(prev => {
+      const nextOptions = getConfiguredSubcategoryOptions(prev, cat)
+        .filter(option => option.toLowerCase() !== subcat.toLowerCase());
+      const next = { ...prev };
+      if (nextOptions.length) next[cat] = nextOptions;
+      else delete next[cat];
+      return next;
+    });
+  };
 
   const exportData = () => {
     const data = {
@@ -4711,6 +5366,7 @@ function Settings({ isMobile }) {
       checkTxns, ccTxns,
       takeHome, t2CarryIn, groceryGoal,
       familySize,
+      subcatsByCat,
       oneTimes, recurringItems, budgetKc, payoffs,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -4733,6 +5389,8 @@ function Settings({ isMobile }) {
         if (d.t2CarryIn !== undefined) setT2CarryIn(d.t2CarryIn);
         if (d.groceryGoal) setGroceryGoal(d.groceryGoal);
         if (d.familySize) setFamilySize(Math.max(1, parseInt(d.familySize, 10) || 1));
+        if (d.subcatsByCat) setSubcatsByCat(normalizeSubcategoriesByCat(d.subcatsByCat));
+        else if (d.checkTxns || d.ccTxns) setSubcatsByCat(collectTxnSubcategoriesByCat([...(d.checkTxns || []), ...(d.ccTxns || [])]));
         if (d.oneTimes)   setOneTimes(d.oneTimes);
         if (d.recurringItems) setRecurringItems(d.recurringItems);
         if (d.budgetKc)   setBudgetKc(d.budgetKc);
@@ -4931,6 +5589,73 @@ function Settings({ isMobile }) {
           </div>
         )}
         <NewCatInput onAdd={nc => setCustomCats(prev => prev.some(c => c.name === nc.name) ? prev : [...prev, nc])} allCats={allCats} />
+      </Card>
+
+      {/* Subcategories */}
+      <Card glow="#38bdf8" style={{marginTop:16}}>
+        <Label>🧷 Subcategories</Label>
+        <div style={{fontSize:12,color:MUTED,marginBottom:12}}>
+          Manage subcategory options for each category. These appear as dropdown choices when adding, editing, or splitting transactions.
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"minmax(0,200px) minmax(0,1fr)",gap:10,alignItems:"end"}}>
+          <div>
+            <div style={{fontSize:11,color:MUTED,marginBottom:6}}>Category</div>
+            <select
+              value={subcatCat}
+              onChange={e => setSubcatCat(e.target.value)}
+              style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 10px",color:TEXT,fontSize:13,outline:"none"}}
+            >
+              {allCats.filter(c => c !== "Income" && c !== "Transfer").map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div style={{fontSize:11,color:MUTED}}>
+            Existing transaction values are preserved. Removing an option only hides it from future selection lists.
+          </div>
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:12,marginBottom:12}}>
+          {activeSubcats.length === 0 && (
+            <div style={{fontSize:12,color:DIM}}>No subcategories configured for this category yet.</div>
+          )}
+          {activeSubcats.map(name => (
+            <div
+              key={name}
+              style={{
+                display:"inline-flex",
+                alignItems:"center",
+                gap:6,
+                padding:"6px 10px",
+                borderRadius:999,
+                border:`1px solid ${BORDER}`,
+                background:"#0f172a",
+              }}
+            >
+              <span style={{fontSize:12,color:TEXT}}>{name}</span>
+              <button
+                onClick={() => removeSubcategoryOption(subcatCat, name)}
+                style={{background:"none",border:"none",color:DIM,cursor:"pointer",padding:0,fontSize:12,lineHeight:1}}
+                aria-label={`Remove ${name}`}
+                title="Remove subcategory"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <input
+            value={subcatInput}
+            onChange={e => setSubcatInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addSubcategoryOption(); } }}
+            placeholder="Add subcategory"
+            style={{flex:"1 1 240px",background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 10px",color:TEXT,fontSize:13,outline:"none"}}
+          />
+          <button
+            onClick={addSubcategoryOption}
+            style={{padding:"8px 14px",borderRadius:8,border:"none",background:"#38bdf8",color:"#082f49",fontWeight:800,cursor:"pointer"}}
+          >
+            + Add
+          </button>
+        </div>
       </Card>
 
       {/* ABA Settings — visible only when ABA feature is enabled */}
@@ -5923,9 +6648,12 @@ Do NOT include a "cat" field.`;
         merchant: buildMerchantSignature(txn?.desc),
       };
     };
-    const existingPrepared = (stmtSrc === "checking" ? checkTxns : ccTxns)
+    const existingTxns = stmtSrc === "checking" ? checkTxns : ccTxns;
+    const existingPrepared = existingTxns
       .map(t => prepare(t))
       .filter(t => t.date && Number.isFinite(t.amountCents) && Number.isFinite(t.year));
+    const existingSplitGroups = collectSplitDuplicateGroups(existingTxns, selectedYear)
+      .filter(group => group.date && Number.isFinite(group.totalCents) && Number.isFinite(group.year));
     const reviewPrepared = reviewed.map(t => prepare({ ...t, year: selectedYear }));
     const exactCounts = new Map();
     reviewPrepared.forEach(item => {
@@ -5936,8 +6664,13 @@ Do NOT include a "cat" field.`;
       const sameSlotExisting = existingPrepared.filter(other =>
         other.year === item.year && other.date === item.date && other.amountCents === item.amountCents
       );
+      const sameSlotSplitGroups = existingSplitGroups.filter(other =>
+        other.year === item.year && other.date === item.date && other.totalCents === item.amountCents
+      );
       const matchesExisting = !!item.exactKey && sameSlotExisting.some(other => other.exactKey === item.exactKey);
       const possibleExisting = !matchesExisting && sameSlotExisting.some(other => merchantSimilarity(item.merchant, other.merchant) >= 0.7);
+      const matchesExistingSplit = !matchesExisting && !!item.exactKey && sameSlotSplitGroups.some(other => other.exactKey === item.exactKey);
+      const possibleExistingSplit = !matchesExisting && !possibleExisting && !matchesExistingSplit && sameSlotSplitGroups.some(other => merchantSimilarity(item.merchant, other.merchant) >= 0.7);
       const repeatsInImport = !!item.exactKey && (exactCounts.get(item.exactKey) || 0) > 1;
       const possibleRepeatInImport = !repeatsInImport && reviewPrepared.some((other, otherIdx) =>
         otherIdx !== idx
@@ -5949,18 +6682,21 @@ Do NOT include a "cat" field.`;
       return {
         matchesExisting,
         possibleExisting,
+        matchesExistingSplit,
+        possibleExistingSplit,
         repeatsInImport,
         possibleRepeatInImport,
-        flagged: matchesExisting || possibleExisting || repeatsInImport || possibleRepeatInImport,
+        flagged: matchesExisting || possibleExisting || matchesExistingSplit || possibleExistingSplit || repeatsInImport || possibleRepeatInImport,
       };
     });
   }, [stmtSrc, checkTxns, ccTxns, reviewed, selectedYear]);
 
   const duplicateCount = duplicateRows.filter(r => r.flagged).length;
-  const existingDuplicateCount = duplicateRows.filter(r => r.matchesExisting || r.possibleExisting).length;
+  const splitDuplicateCount = duplicateRows.filter(r => r.matchesExistingSplit || r.possibleExistingSplit).length;
+  const existingDuplicateCount = duplicateRows.filter(r => r.matchesExisting || r.possibleExisting || r.matchesExistingSplit || r.possibleExistingSplit).length;
   const importDuplicateCount = duplicateRows.filter(r => r.repeatsInImport || r.possibleRepeatInImport).length;
   const selectedDuplicateCount = duplicateRows.reduce((sum, r, idx) => sum + (r.flagged && reviewed[idx]?._include ? 1 : 0), 0);
-  const selectedExistingDuplicateCount = duplicateRows.reduce((sum, r, idx) => sum + ((r.matchesExisting || r.possibleExisting) && reviewed[idx]?._include ? 1 : 0), 0);
+  const selectedExistingDuplicateCount = duplicateRows.reduce((sum, r, idx) => sum + ((r.matchesExisting || r.possibleExisting || r.matchesExistingSplit || r.possibleExistingSplit) && reviewed[idx]?._include ? 1 : 0), 0);
   const selectedImportDuplicateCount = duplicateRows.reduce((sum, r, idx) => sum + ((r.repeatsInImport || r.possibleRepeatInImport) && reviewed[idx]?._include ? 1 : 0), 0);
 
   const excludeFlaggedDuplicates = () => {
@@ -6176,10 +6912,10 @@ Do NOT include a "cat" field.`;
                 <div>
                   <div style={{fontSize:14,fontWeight:800,color:"#fbbf24"}}>Possible duplicates found</div>
                   <div style={{fontSize:12,color:"#fde68a",marginTop:4}}>
-                    {duplicateCount} row{duplicateCount === 1 ? "" : "s"} matched the duplicate check exactly or approximately. {selectedDuplicateCount} {selectedDuplicateCount === 1 ? "is" : "are"} still selected.
+                    {duplicateCount} row{duplicateCount === 1 ? "" : "s"} matched the duplicate check exactly or approximately, including split groups. {selectedDuplicateCount} {selectedDuplicateCount === 1 ? "is" : "are"} still selected.
                   </div>
                   <div style={{fontSize:11,color:"#fcd34d",marginTop:6}}>
-                    {existingDuplicateCount} match existing {stmtSrc === "checking" ? "checking" : "credit card"} transactions in {selectedYear}. {importDuplicateCount} repeat inside this import file.
+                    {existingDuplicateCount} match existing {stmtSrc === "checking" ? "checking" : "credit card"} transactions or split groups in {selectedYear}. {splitDuplicateCount} came from split groups. {importDuplicateCount} repeat inside this import file.
                   </div>
                 </div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -6242,6 +6978,8 @@ Do NOT include a "cat" field.`;
                             {t._localMatch && <span style={{fontSize:9,fontWeight:700,background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e33",borderRadius:4,padding:"1px 4px"}}>{t._localMatchPossible ? "≈ likely match" : "✓ known"}</span>}
                             {duplicateInfo.matchesExisting && <span style={{fontSize:9,fontWeight:700,background:"#f59e0b22",color:"#fbbf24",border:"1px solid #f59e0b33",borderRadius:4,padding:"1px 4px"}}>⚠ matches existing</span>}
                             {duplicateInfo.possibleExisting && <span style={{fontSize:9,fontWeight:700,background:"#facc1522",color:"#facc15",border:"1px solid #facc1533",borderRadius:4,padding:"1px 4px"}}>≈ possible duplicate</span>}
+                            {duplicateInfo.matchesExistingSplit && <span style={{fontSize:9,fontWeight:700,background:"#f9731622",color:"#fdba74",border:"1px solid #f9731633",borderRadius:4,padding:"1px 4px"}}>⚠ matches split group</span>}
+                            {duplicateInfo.possibleExistingSplit && <span style={{fontSize:9,fontWeight:700,background:"#fb923c22",color:"#fdba74",border:"1px solid #fb923c33",borderRadius:4,padding:"1px 4px"}}>≈ possible split match</span>}
                             {duplicateInfo.repeatsInImport && <span style={{fontSize:9,fontWeight:700,background:"#fb923c22",color:"#fdba74",border:"1px solid #fb923c33",borderRadius:4,padding:"1px 4px"}}>↺ repeated in file</span>}
                             {duplicateInfo.possibleRepeatInImport && <span style={{fontSize:9,fontWeight:700,background:"#fb923c22",color:"#fdba74",border:"1px solid #fb923c33",borderRadius:4,padding:"1px 4px"}}>≈ possible repeat</span>}
                           </div>
@@ -6331,7 +7069,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.17";
+const APP_VERSION = "0.1.18";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
@@ -6512,6 +7250,60 @@ function buildTxnFingerprint(txn, fallbackYear = null) {
   const year = deriveTxnYear(txn, fallbackYear);
   if (!date || !desc || !Number.isFinite(amount) || !Number.isFinite(year)) return null;
   return `${year}|${date}|${Math.round(amount * 100)}|${desc}`;
+}
+function getTxnSplitGroupKey(txn, fallbackYear = null) {
+  const year = deriveTxnYear(txn, fallbackYear);
+  const date = fingerprintTxnDate(txn?.date);
+  if (!date || !Number.isFinite(year)) return "";
+  const splitGroupId = String(txn?.splitGroupId || "").trim();
+  if (splitGroupId) return `${year}|${date}|id:${splitGroupId}`;
+  const parentDesc = String(txn?.splitParentDesc || "").trim();
+  const parentAmount = Number(txn?.splitParentAmount);
+  if (parentDesc || Number.isFinite(parentAmount)) {
+    return `${year}|${date}|meta:${fingerprintTxnDesc(parentDesc)}|${Number.isFinite(parentAmount) ? Math.round(Math.abs(parentAmount) * 100) : ""}`;
+  }
+  return "";
+}
+function collectSplitDuplicateGroups(txns = [], fallbackYear = null) {
+  const groups = new Map();
+  txns.forEach(txn => {
+    const groupKey = getTxnSplitGroupKey(txn, fallbackYear);
+    if (!groupKey) return;
+    const year = deriveTxnYear(txn, fallbackYear);
+    const date = fingerprintTxnDate(txn?.date);
+    const amount = Number(txn?.amount);
+    const amountCents = Number.isFinite(amount) ? Math.round(Math.abs(amount) * 100) : null;
+    if (!date || !Number.isFinite(year) || !Number.isFinite(amountCents) || amountCents <= 0) return;
+    const parentDesc = String(txn?.splitParentDesc || "").trim();
+    const parentAmount = Number(txn?.splitParentAmount);
+    const entry = groups.get(groupKey) || {
+      year,
+      date,
+      totalCents: 0,
+      txnCount: 0,
+      parentDesc,
+      parentAmountCents: Number.isFinite(parentAmount) ? Math.round(Math.abs(parentAmount) * 100) : null,
+      merchant: buildMerchantSignature(parentDesc || txn?.desc),
+    };
+    entry.totalCents += amountCents;
+    entry.txnCount += 1;
+    if (!entry.parentDesc && parentDesc) {
+      entry.parentDesc = parentDesc;
+      entry.merchant = buildMerchantSignature(parentDesc);
+    }
+    if (!Number.isFinite(entry.parentAmountCents) && Number.isFinite(parentAmount)) {
+      entry.parentAmountCents = Math.round(Math.abs(parentAmount) * 100);
+    }
+    groups.set(groupKey, entry);
+  });
+  return [...groups.values()]
+    .map(group => ({
+      ...group,
+      exactKey: group.parentDesc
+        ? `${group.year}|${group.date}|${group.totalCents}|${fingerprintTxnDesc(group.parentDesc)}`
+        : null,
+    }))
+    .filter(group => group.txnCount > 1 || Number.isFinite(group.parentAmountCents));
 }
 function monthYearValue(year, month) {
   const safeYear = Number(year);
@@ -6727,13 +7519,13 @@ export default function BudgetDashboardClean() {
   // ── Live transaction state — persisted to localStorage ────────────────────
   const [checkTxns, setCheckTxns] = useState(() => {
     return normalizeTxnIds(
-      ls.getJSON("budget_checkTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, currentYear), excludeFromTags: !!t.excludeFromTags })),
+      ls.getJSON("budget_checkTxns", []).map(t => ({ ...t, subcat: normalizeTxnSubcategory(t.subcat), month: deriveTxnMonth(t), year: deriveTxnYear(t, currentYear), excludeFromTags: !!t.excludeFromTags })),
       "c",
     );
   });
   const [ccTxns, setCCTxns] = useState(() => {
     return normalizeTxnIds(
-      ls.getJSON("budget_ccTxns", []).map(t => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, currentYear), excludeFromTags: !!t.excludeFromTags })),
+      ls.getJSON("budget_ccTxns", []).map(t => ({ ...t, subcat: normalizeTxnSubcategory(t.subcat), month: deriveTxnMonth(t), year: deriveTxnYear(t, currentYear), excludeFromTags: !!t.excludeFromTags })),
       "cc",
     );
   });
@@ -6836,6 +7628,15 @@ export default function BudgetDashboardClean() {
     return raw.map(c => typeof c === "string" ? { name: c, icon: "📁", color: "#94a3b8" } : c);
   });
   useEffect(() => { ls.setJSON("budget_customCats", customCats); }, [customCats]);
+  const [subcatsByCat, setSubcatsByCat] = useState(() => {
+    const stored = normalizeSubcategoriesByCat(ls.getJSON("budget_subcatsByCat", {}));
+    if (Object.keys(stored).length) return stored;
+    return collectTxnSubcategoriesByCat([
+      ...ls.getJSON("budget_checkTxns", []),
+      ...ls.getJSON("budget_ccTxns", []),
+    ]);
+  });
+  useEffect(() => { ls.setJSON("budget_subcatsByCat", subcatsByCat); }, [subcatsByCat]);
   const allCats = useMemo(() => [...VALID_CATS, ...customCats.map(c => c.name)], [customCats]);
   const catColorsAll = useMemo(() => {
     const all = { ...CAT_COLORS };
@@ -6878,9 +7679,17 @@ export default function BudgetDashboardClean() {
   }, [showTithe, showABA, page, scenariosTab, categoriesTab]);
 
   const updateTxnCat = useCallback((src, id, newCat) => {
-    if (src === "checking") setCheckTxns(prev => prev.map(t => t.id === id ? { ...t, cat: newCat } : t));
-    else                    setCCTxns(prev => prev.map(t => t.id === id ? { ...t, cat: newCat } : t));
-  }, []);
+    if (src === "checking") setCheckTxns(prev => prev.map(t => t.id === id ? {
+      ...t,
+      cat: newCat,
+      subcat: coerceTxnSubcategoryForCategory(subcatsByCat, newCat, t.subcat),
+    } : t));
+    else                    setCCTxns(prev => prev.map(t => t.id === id ? {
+      ...t,
+      cat: newCat,
+      subcat: coerceTxnSubcategoryForCategory(subcatsByCat, newCat, t.subcat),
+    } : t));
+  }, [subcatsByCat]);
 
   const updateTxn = useCallback((src, id, patch) => {
     const cleanPatch = {
@@ -6890,6 +7699,11 @@ export default function BudgetDashboardClean() {
       amount: Number(patch.amount),
       note: patch.note ?? "",
     };
+    if (Object.prototype.hasOwnProperty.call(patch, "subcat")) {
+      cleanPatch.subcat = normalizeTxnSubcategory(patch.subcat);
+    } else {
+      delete cleanPatch.subcat;
+    }
     if (!cleanPatch.desc || !cleanPatch.date || Number.isNaN(cleanPatch.amount)) return;
     if (src === "checking") setCheckTxns(prev => prev.map(t => t.id === id ? {
       ...t,
@@ -6903,7 +7717,7 @@ export default function BudgetDashboardClean() {
       month: deriveTxnMonth({ ...t, ...cleanPatch }),
       year: deriveTxnYear({ ...t, ...cleanPatch }, t.year || selectedYear),
     } : t));
-  }, []);
+  }, [selectedYear]);
 
   const deleteTxn = useCallback((src, id, opts = {}) => {
     if (!opts.force && !confirmDeleteAction("Delete this transaction?")) return;
@@ -6932,7 +7746,21 @@ export default function BudgetDashboardClean() {
         if (idx < 0) return prev;
         const base = prev[idx];
         const usedIds = new Set(prev.filter(t => t.id !== id).map(t => t.id).filter(Boolean));
-        const splits = splitTxns.map(t => ({ ...base, ...t, id: makeTxnId("c", usedIds), note: (t.note||"")+" [split]" }));
+        const splitParentDesc = String(base.splitParentDesc || base.desc || "").trim() || "Split purchase";
+        const splitParentAmount = roundMoney(Math.abs(Number(base.splitParentAmount) || Number(base.amount) || 0));
+        const splitGroupId = String(base.splitGroupId || base.id || "").trim() || makeTxnId("sg", new Set());
+        const splitParentId = String(base.splitParentId || base.id || splitGroupId).trim();
+        const splits = splitTxns.map(t => ({
+          ...base,
+          splitGroupId,
+          splitParentId,
+          splitParentDesc,
+          splitParentAmount,
+          ...t,
+          subcat: normalizeTxnSubcategory(t.subcat),
+          id: makeTxnId("c", usedIds),
+          note: (t.note||"")+" [split]",
+        }));
         return [...prev.slice(0, idx), ...splits, ...prev.slice(idx + 1)];
       });
     } else {
@@ -6941,7 +7769,21 @@ export default function BudgetDashboardClean() {
         if (idx < 0) return prev;
         const base = prev[idx];
         const usedIds = new Set(prev.filter(t => t.id !== id).map(t => t.id).filter(Boolean));
-        const splits = splitTxns.map(t => ({ ...base, ...t, id: makeTxnId("cc", usedIds), note: (t.note||"")+" [split]" }));
+        const splitParentDesc = String(base.splitParentDesc || base.desc || "").trim() || "Split purchase";
+        const splitParentAmount = roundMoney(Math.abs(Number(base.splitParentAmount) || Number(base.amount) || 0));
+        const splitGroupId = String(base.splitGroupId || base.id || "").trim() || makeTxnId("sg", new Set());
+        const splitParentId = String(base.splitParentId || base.id || splitGroupId).trim();
+        const splits = splitTxns.map(t => ({
+          ...base,
+          splitGroupId,
+          splitParentId,
+          splitParentDesc,
+          splitParentAmount,
+          ...t,
+          subcat: normalizeTxnSubcategory(t.subcat),
+          id: makeTxnId("cc", usedIds),
+          note: (t.note||"")+" [split]",
+        }));
         return [...prev.slice(0, idx), ...splits, ...prev.slice(idx + 1)];
       });
     }
@@ -6949,20 +7791,28 @@ export default function BudgetDashboardClean() {
 
   // Reassign every transaction in oldCat to newCat across both accounts
   const retargetCat = useCallback((oldCat, newCat) => {
-    setCheckTxns(prev => prev.map(t => t.cat === oldCat ? { ...t, cat: newCat } : t));
-    setCCTxns(prev => prev.map(t => t.cat === oldCat ? { ...t, cat: newCat } : t));
-  }, []);
+    setCheckTxns(prev => prev.map(t => t.cat === oldCat ? {
+      ...t,
+      cat: newCat,
+      subcat: coerceTxnSubcategoryForCategory(subcatsByCat, newCat, t.subcat),
+    } : t));
+    setCCTxns(prev => prev.map(t => t.cat === oldCat ? {
+      ...t,
+      cat: newCat,
+      subcat: coerceTxnSubcategoryForCategory(subcatsByCat, newCat, t.subcat),
+    } : t));
+  }, [subcatsByCat]);
 
   const addTxns = useCallback((src, newTxns) => {
     if (src === "checking") {
       setCheckTxns(prev => {
         const usedIds = new Set(prev.map(t => t.id).filter(Boolean));
-        return [...prev, ...newTxns.map(t => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, selectedYear), excludeFromTags: !!t.excludeFromTags, id: makeTxnId("c", usedIds) }))];
+        return [...prev, ...newTxns.map(t => ({ ...t, subcat: normalizeTxnSubcategory(t.subcat), month: deriveTxnMonth(t), year: deriveTxnYear(t, selectedYear), excludeFromTags: !!t.excludeFromTags, id: makeTxnId("c", usedIds) }))];
       });
     } else {
       setCCTxns(prev => {
         const usedIds = new Set(prev.map(t => t.id).filter(Boolean));
-        return [...prev, ...newTxns.map(t => ({ ...t, month: deriveTxnMonth(t), year: deriveTxnYear(t, selectedYear), excludeFromTags: !!t.excludeFromTags, id: makeTxnId("cc", usedIds) }))];
+        return [...prev, ...newTxns.map(t => ({ ...t, subcat: normalizeTxnSubcategory(t.subcat), month: deriveTxnMonth(t), year: deriveTxnYear(t, selectedYear), excludeFromTags: !!t.excludeFromTags, id: makeTxnId("cc", usedIds) }))];
       });
     }
   }, [selectedYear]);
@@ -7072,6 +7922,7 @@ export default function BudgetDashboardClean() {
     hideZeroSummaryCats, setHideZeroSummaryCats,
     mobileTxnActionMenu, setMobileTxnActionMenu,
     customCats, setCustomCats, allCats, catColorsAll,
+    subcatsByCat, setSubcatsByCat,
     abaSettings, setAbaSettings,
     titheSettings, setTitheSettings,
     retargetCat,
@@ -7322,8 +8173,3 @@ export default function BudgetDashboardClean() {
     </BudgetCtx.Provider>
   );
 }
-
-
-
-
-

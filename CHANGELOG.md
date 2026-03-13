@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.18] - 2026-03-13
+
+### Added
+- Add Transaction now supports AI receipt upload, letting you upload a store receipt, extract merchant/date/total, review editable split rows, and save the parsed items as split transactions.
+- CSV import duplicate detection now recognizes existing split groups, so a later import of the original unsplit purchase can be flagged against previously split transactions.
+- Subcategories are now supported across transaction entry, split editing, receipt parsing, and the Cash Flow Sankey with a category/subcategory breakdown toggle.
+
+### Changed
+- Subcategories are now managed from Settings and selected from dropdowns instead of being entered free-form per transaction.
+
+### Fixed
+- Subcategory configuration is again limited to the Settings page, under Custom Categories, instead of appearing on the Categories page.
+
 ## [0.1.17] - 2026-03-08
 
 ### Changed
