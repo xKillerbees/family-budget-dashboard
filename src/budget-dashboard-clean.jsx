@@ -231,9 +231,33 @@ function inferDataUrlMediaType(dataUrl, fallback = "image/jpeg") {
   const match = String(dataUrl || "").match(/^data:([^;]+);base64,/i);
   return match?.[1] || fallback;
 }
+function readFirstReceiptField(payload = {}, keys = []) {
+  for (const key of keys) {
+    const value = payload?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+  }
+  return undefined;
+}
+function parsePositiveReceiptMoney(payload = {}, keys = []) {
+  const value = parseMoneyValue(readFirstReceiptField(payload, keys));
+  return Number.isFinite(value) && Math.abs(value) > 0 ? Math.abs(value) : NaN;
+}
+function normalizeReceiptTotalLabel(value) {
+  return String(value || "").trim();
+}
+function isReceiptCreditLikeLabel(label = "") {
+  return /\b(reward|rewards|cash\s*back|rebate|coupon|discount|saving|savings|credit|points?)\b/i.test(String(label || ""));
+}
 function parseFlexibleDateParts(raw, fallbackYear = null) {
   const text = String(raw || "").trim();
   if (!text) return null;
+  if (/^\d{4}$/.test(text)) {
+    return { year: Number(text), month: null, day: null };
+  }
+  const monthYearMatch = text.match(/^(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}$/i);
+  if (monthYearMatch) {
+    return { year: Number(text.match(/\d{4}$/)?.[0]), month: null, day: null };
+  }
   let match = text.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
   if (match) {
     return { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };
@@ -268,6 +292,52 @@ function normalizeReceiptDateValue(raw, fallbackYear = null) {
     iso: Number.isFinite(year) ? `${year}-${mm}-${dd}` : "",
     mmdd: `${mm}/${dd}`,
     year: Number.isFinite(year) ? year : null,
+  };
+}
+function chooseReceiptTotal(payload = {}, expectedTotal = null, fallbackItemsTotal = 0) {
+  const hintedTotal = Math.abs(parseMoneyValue(expectedTotal));
+  if (Number.isFinite(hintedTotal) && hintedTotal > 0) {
+    return { amount: hintedTotal, note: "Matched to entered amount" };
+  }
+  const paidTotal = parsePositiveReceiptMoney(payload, ["paid_total", "paidTotal", "net_total", "netTotal", "final_total", "finalTotal", "charged_total", "chargedTotal", "card_total", "cardTotal"]);
+  const genericTotal = parsePositiveReceiptMoney(payload, ["total", "purchase_total", "purchaseTotal"]);
+  const totalLabel = normalizeReceiptTotalLabel(readFirstReceiptField(payload, ["total_label", "totalLabel", "paid_total_label", "paidTotalLabel", "total_source_label", "totalSourceLabel"]));
+  const preCreditTotal = parsePositiveReceiptMoney(payload, ["pre_credit_total", "preCreditTotal", "gross_total", "grossTotal"]);
+  const creditApplied = parsePositiveReceiptMoney(payload, ["credit_applied", "creditApplied", "reward_credit", "rewardCredit", "reward_applied", "rewardApplied", "discount_applied", "discountApplied", "coupon_total", "couponTotal", "member_savings", "memberSavings"]);
+  const subtotal = parsePositiveReceiptMoney(payload, ["subtotal"]);
+  const tax = parsePositiveReceiptMoney(payload, ["tax", "sales_tax", "salesTax"]);
+  const labelIsCreditLike = isReceiptCreditLikeLabel(totalLabel);
+  const computedNet = Number.isFinite(preCreditTotal)
+    ? roundMoney(Math.max(0, preCreditTotal - (Number.isFinite(creditApplied) ? creditApplied : 0)))
+    : NaN;
+  const subtotalPlusTax = Number.isFinite(subtotal)
+    ? roundMoney(subtotal + (Number.isFinite(tax) ? tax : 0))
+    : NaN;
+
+  if (Number.isFinite(paidTotal) && paidTotal > 0) {
+    return { amount: paidTotal, note: totalLabel || "Paid total from receipt" };
+  }
+  if (Number.isFinite(genericTotal) && genericTotal > 0 && !labelIsCreditLike) {
+    return { amount: genericTotal, note: totalLabel || "Total from receipt" };
+  }
+  if (Number.isFinite(computedNet) && computedNet > 0) {
+    const pieces = [];
+    if (Number.isFinite(preCreditTotal) && preCreditTotal > 0) pieces.push(money2(preCreditTotal));
+    if (Number.isFinite(creditApplied) && creditApplied > 0) pieces.push(`-${money2(creditApplied)}`);
+    return {
+      amount: computedNet,
+      note: pieces.length > 1 ? `${pieces.join(" ")} reward-adjusted total` : "Computed net total",
+    };
+  }
+  if (Number.isFinite(genericTotal) && genericTotal > 0 && labelIsCreditLike) {
+    throw new Error("AI matched a reward/credit line instead of the paid total. Enter the card total first or re-parse the receipt.");
+  }
+  if (Number.isFinite(subtotalPlusTax) && subtotalPlusTax > 0) {
+    return { amount: subtotalPlusTax, note: "Subtotal plus tax" };
+  }
+  return {
+    amount: roundMoney(Math.abs(Number(fallbackItemsTotal) || 0)),
+    note: "Summed from parsed receipt items",
   };
 }
 function distributeReceiptAmounts(items, targetTotal = null) {
@@ -330,11 +400,9 @@ function normalizeReceiptAiResult(raw, {
     })
     .filter(Boolean);
   if (!cleanedItems.length) throw new Error("No receipt items were returned.");
-  const parsedTotal = Math.abs(parseMoneyValue(payload.total));
-  const hintedTotal = Math.abs(parseMoneyValue(expectedTotal));
-  const targetTotal = (Number.isFinite(hintedTotal) && hintedTotal > 0)
-    ? hintedTotal
-    : ((Number.isFinite(parsedTotal) && parsedTotal > 0) ? parsedTotal : cleanedItems.reduce((sum, item) => sum + item.amount, 0));
+  const itemTotal = cleanedItems.reduce((sum, item) => sum + item.amount, 0);
+  const totalChoice = chooseReceiptTotal(payload, expectedTotal, itemTotal);
+  const targetTotal = totalChoice.amount;
   const items = distributeReceiptAmounts(cleanedItems, targetTotal);
   if (!items.length) throw new Error("No receipt items were usable.");
   return {
@@ -343,6 +411,7 @@ function normalizeReceiptAiResult(raw, {
     txnDate: dateInfo.mmdd,
     year: dateInfo.year,
     total: roundMoney(items.reduce((sum, item) => sum + item.amount, 0)),
+    totalNote: totalChoice.note || "",
     items,
   };
 }
@@ -377,11 +446,16 @@ Date hint: ${dateHint || "none"}.
 Total hint: ${Number.isFinite(Number(expectedTotal)) && Number(expectedTotal) > 0 ? `$${Number(expectedTotal).toFixed(2)}` : "none"}.
 
 Return ONLY strict JSON with this exact shape:
-{"merchant":"Store name","date":"YYYY-MM-DD","total":123.45,"items":[{"desc":"Costco groceries","amount":75.43,"cat":"Groceries"}]}
+{"merchant":"Store name","date":"YYYY-MM-DD","paid_total":123.45,"pre_credit_total":140.00,"credit_applied":16.00,"total_label":"TOTAL","items":[{"desc":"Costco groceries","amount":75.43,"cat":"Groceries"}]}
 
 Rules:
 - Read the merchant, purchase date, and final paid total from the image when visible.
-- Prefer 2 to 10 useful budget split lines instead of every SKU. Group similar items together.
+- "paid_total" is the net amount actually charged after reward credits, coupons, or discounts.
+- If the receipt shows both a pre-credit total and a reward/coupon/credit line, return the pre-credit value in "pre_credit_total", the credit amount in "credit_applied", and the final charged amount in "paid_total".
+- "total_label" should be the nearby label text used for "paid_total" such as "TOTAL", "DEBIT TOTAL", "VISA TOTAL", or "AMOUNT DUE".
+- Never use labels like "CC Reward", "Reward", "Savings", "Coupon", or "Discount" as the final paid total.
+- Include the full receipt, including continued sections like "Bottom of Basket", "BOB Count", or lower receipt segments.
+- Prefer 4 to 12 useful budget split lines for long club-store receipts instead of every SKU. Group similar items together.
 - Every item amount must be positive.
 - If tax, discounts, or fees appear, distribute them into the final positive item amounts so the item amounts sum exactly to the total.
 - Use only the allowed categories.
@@ -2561,7 +2635,7 @@ function TxnTable({ src, isMobile }) {
   const [receiptParsing, setReceiptParsing] = useState(false);
   const [receiptParseErr, setReceiptParseErr] = useState(null);
   const [receiptParts, setReceiptParts] = useState([]);
-  const [receiptMeta, setReceiptMeta] = useState({ merchant: "", dateIso: "", total: 0 });
+  const [receiptMeta, setReceiptMeta] = useState({ merchant: "", dateIso: "", total: 0, totalNote: "" });
   const receiptCats = getReceiptBudgetCats(allCats);
   const fallbackReceiptCat = receiptCats.includes("Snacks/Misc") ? "Snacks/Misc" : (receiptCats[0] || allCats[0]);
   useEffect(() => { if (addFeedback) setAddFeedback(null); }, [monthFilter, catFilter, search, sortBy, showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2578,7 +2652,7 @@ function TxnTable({ src, isMobile }) {
     setReceiptParsing(false);
     setReceiptParseErr(null);
     setReceiptParts([]);
-    setReceiptMeta({ merchant: "", dateIso: "", total: 0 });
+    setReceiptMeta({ merchant: "", dateIso: "", total: 0, totalNote: "" });
   };
 
   const updateReceiptPart = (idx, field, value) => {
@@ -2617,7 +2691,12 @@ function TxnTable({ src, isMobile }) {
         dateHint: newDate,
         fallbackYear: selectedYear,
       });
-      setReceiptMeta({ merchant: parsed.merchant || "", dateIso: parsed.dateIso || "", total: parsed.total || 0 });
+      setReceiptMeta({
+        merchant: parsed.merchant || "",
+        dateIso: parsed.dateIso || "",
+        total: parsed.total || 0,
+        totalNote: parsed.totalNote || "",
+      });
       setReceiptParts(parsed.items.map(item => ({
         desc: item.desc || "",
         amount: item.amount,
@@ -2915,7 +2994,7 @@ function TxnTable({ src, isMobile }) {
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:8}}>
                 <div>
                   <div style={{fontSize:12,fontWeight:700,color:"#06b6d4",marginBottom:4}}>📷 AI Receipt Upload (optional)</div>
-                  <div style={{fontSize:11,color:MUTED}}>Upload a Costco or store receipt and AI will build editable split lines for you.</div>
+                  <div style={{fontSize:11,color:MUTED}}>Upload a Costco or store receipt and AI will build editable split lines for you. If you already know the card total, enter it in Amount first and the split will be forced to match it exactly.</div>
                 </div>
                 {receiptParts.length > 0 && (
                   <button onClick={() => { setReceiptParts([]); setReceiptParseErr(null); }}
@@ -2948,6 +3027,11 @@ function TxnTable({ src, isMobile }) {
                   {receiptMeta.merchant && <Tag color="#06b6d4">{receiptMeta.merchant}</Tag>}
                   {receiptMeta.dateIso && <Tag color="#8b5cf6">{receiptMeta.dateIso}</Tag>}
                   {receiptMeta.total > 0 && <Tag color="#22c55e">{money2(receiptMeta.total)}</Tag>}
+                </div>
+              )}
+              {receiptMeta.totalNote && (
+                <div style={{fontSize:11,color:MUTED,marginTop:8}}>
+                  Total source: {receiptMeta.totalNote}
                 </div>
               )}
               {receiptParseErr && <div style={{fontSize:11,color:"#f59e0b",marginTop:8,padding:"6px 10px",background:"#f59e0b11",borderRadius:6}}>{receiptParseErr}</div>}
@@ -7069,7 +7153,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.18";
+const APP_VERSION = "0.1.19";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",

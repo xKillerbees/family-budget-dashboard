@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.19] - 2026-03-13
+
+### Changed
+- AI receipt parsing now asks for a net paid total, pre-credit total, applied reward/discount amount, and the source total label so long retail receipts are less likely to pick the wrong summary line.
+- The Add Transaction receipt panel now shows how the total was chosen and reminds you that entering the known card total first will force the split to match it exactly.
+
+### Fixed
+- Receipt parsing no longer silently treats reward/credit lines like `CC Reward` as the transaction total when the paid total should be used instead.
+- Receipt date parsing no longer converts a bare year-only value into `January 1` of that year.
+
 ## [0.1.18] - 2026-03-13
 
 ### Added
