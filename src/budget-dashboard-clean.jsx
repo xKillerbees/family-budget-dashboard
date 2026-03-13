@@ -340,6 +340,44 @@ function chooseReceiptTotal(payload = {}, expectedTotal = null, fallbackItemsTot
     note: "Summed from parsed receipt items",
   };
 }
+function buildReceiptBudgetBucketDesc(merchant = "", cat = "", subcat = "") {
+  const cleanMerchant = String(merchant || "").trim();
+  const cleanCat = String(cat || "").trim();
+  const cleanSubcat = normalizeTxnSubcategory(subcat);
+  const bucketLabel = cleanSubcat || cleanCat || "purchase";
+  if (!cleanMerchant) return bucketLabel;
+  return `${cleanMerchant} ${bucketLabel.toLowerCase()}`.replace(/\s+/g, " ").trim();
+}
+function collapseReceiptItemsByBudgetBucket(items = [], merchant = "") {
+  const groups = new Map();
+  items.forEach((item, idx) => {
+    const cat = String(item?.cat || "").trim();
+    const subcat = normalizeTxnSubcategory(item?.subcat);
+    const amount = roundMoney(Math.abs(Number(item?.amount) || 0));
+    if (!cat || amount <= 0) return;
+    const key = `${cat.toLowerCase()}|||${subcat.toLowerCase()}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.amount = roundMoney(existing.amount + amount);
+      return;
+    }
+    groups.set(key, {
+      desc: buildReceiptBudgetBucketDesc(merchant, cat, subcat) || String(item?.desc || "").trim() || `Receipt item ${idx + 1}`,
+      amount,
+      cat,
+      subcat,
+    });
+  });
+  const collapsed = [...groups.values()];
+  if (collapsed.length <= 1) return collapsed;
+  const collapsedTotal = roundMoney(collapsed.reduce((sum, item) => sum + item.amount, 0));
+  return distributeReceiptAmounts(collapsed, collapsedTotal).map((item, idx) => ({
+    desc: item.desc || `Receipt item ${idx + 1}`,
+    amount: item.amount,
+    cat: item.cat,
+    subcat: item.subcat,
+  }));
+}
 function distributeReceiptAmounts(items, targetTotal = null) {
   const cleaned = items
     .map(item => ({ ...item, amount: Math.abs(Number(item?.amount) || 0) }))
@@ -383,13 +421,22 @@ function normalizeReceiptAiResult(raw, {
   const dateInfo = normalizeReceiptDateValue(payload.date || dateHint, fallbackYear);
   const rawItems = Array.isArray(payload.items)
     ? payload.items
-    : (Array.isArray(payload.lines) ? payload.lines : (Array.isArray(payload.splits) ? payload.splits : []));
-  const cleanedItems = rawItems
+    : (Array.isArray(payload.lines)
+      ? payload.lines
+      : (Array.isArray(payload.splits)
+        ? payload.splits
+        : (Array.isArray(payload.category_totals)
+          ? payload.category_totals
+          : (Array.isArray(payload.categoryTotals)
+            ? payload.categoryTotals
+            : (Array.isArray(payload.categories) ? payload.categories : [])))));
+  const detailedItems = rawItems
     .map((item, idx) => {
-      const amount = Math.abs(parseMoneyValue(item?.amount));
+      const amount = Math.abs(parseMoneyValue(item?.amount ?? item?.total ?? item?.value));
       if (!Number.isFinite(amount) || amount <= 0) return null;
-      const cat = receiptCats.includes(item?.cat) ? item.cat : fallbackCat;
-      const desc = String(item?.desc || item?.name || item?.label || `${merchant || "Receipt"} item ${idx + 1}`).trim();
+      const rawCat = String(item?.cat || item?.category || item?.budget_category || item?.budgetCategory || "").trim();
+      const cat = receiptCats.includes(rawCat) ? rawCat : fallbackCat;
+      const desc = String(item?.desc || item?.name || item?.label || item?.title || rawCat || `${merchant || "Receipt"} item ${idx + 1}`).trim();
       const subcat = normalizeTxnSubcategory(item?.subcat || item?.subcategory);
       return {
         desc: desc || `${merchant || "Receipt"} item ${idx + 1}`,
@@ -399,7 +446,9 @@ function normalizeReceiptAiResult(raw, {
       };
     })
     .filter(Boolean);
-  if (!cleanedItems.length) throw new Error("No receipt items were returned.");
+  if (!detailedItems.length) throw new Error("No receipt items were returned.");
+  const cleanedItems = collapseReceiptItemsByBudgetBucket(detailedItems, merchant);
+  if (!cleanedItems.length) throw new Error("No receipt items were usable.");
   const itemTotal = cleanedItems.reduce((sum, item) => sum + item.amount, 0);
   const totalChoice = chooseReceiptTotal(payload, expectedTotal, itemTotal);
   const targetTotal = totalChoice.amount;
@@ -446,7 +495,7 @@ Date hint: ${dateHint || "none"}.
 Total hint: ${Number.isFinite(Number(expectedTotal)) && Number(expectedTotal) > 0 ? `$${Number(expectedTotal).toFixed(2)}` : "none"}.
 
 Return ONLY strict JSON with this exact shape:
-{"merchant":"Store name","date":"YYYY-MM-DD","paid_total":123.45,"pre_credit_total":140.00,"credit_applied":16.00,"total_label":"TOTAL","items":[{"desc":"Costco groceries","amount":75.43,"cat":"Groceries"}]}
+{"merchant":"Store name","date":"YYYY-MM-DD","paid_total":123.45,"pre_credit_total":140.00,"credit_applied":16.00,"total_label":"TOTAL","items":[{"desc":"Costco groceries","amount":96.25,"cat":"Groceries"},{"desc":"Costco shopping","amount":27.20,"cat":"Shopping"}]}
 
 Rules:
 - Read the merchant, purchase date, and final paid total from the image when visible.
@@ -455,11 +504,16 @@ Rules:
 - "total_label" should be the nearby label text used for "paid_total" such as "TOTAL", "DEBIT TOTAL", "VISA TOTAL", or "AMOUNT DUE".
 - Never use labels like "CC Reward", "Reward", "Savings", "Coupon", or "Discount" as the final paid total.
 - Include the full receipt, including continued sections like "Bottom of Basket", "BOB Count", or lower receipt segments.
-- Prefer 4 to 12 useful budget split lines for long club-store receipts instead of every SKU. Group similar items together.
+- Return final budget totals, not intermediate clusters.
+- Prefer one line per final budget category or category+subcategory bucket that will actually be saved in the app.
+- Do not return multiple rows for the same category unless they belong to different explicit subcategories.
+- For warehouse receipts like Costco or Sam's, usually return only 2 to 4 final budget rows, such as Groceries, Shopping, Household, or Pets if those categories exist in the allowed list.
+- Food, beverages, produce, meat, pantry, frozen items, and supplements belong in Groceries unless a more specific allowed category exists.
+- Pet food/litter, filters, household supplies, paper goods, personal care, diapers, clothing, and other non-food goods belong in Shopping unless a more specific allowed category exists.
 - Every item amount must be positive.
 - If tax, discounts, or fees appear, distribute them into the final positive item amounts so the item amounts sum exactly to the total.
 - Use only the allowed categories.
-- Make descriptions concise and store-aware.
+- Make descriptions concise, store-aware, and bucket-level, such as "Costco groceries" or "Costco shopping".
 - If the image is ambiguous, use the hints as fallback.
 - Do not include markdown, comments, or explanation.`;
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -7153,7 +7207,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.19";
+const APP_VERSION = "0.1.20";
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",

@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.20] - 2026-03-13
+
+### Changed
+- AI receipt parsing for warehouse receipts now asks for final budget-category totals instead of multiple intermediate grocery clusters.
+- Receipt descriptions for parsed split lines are now normalized toward bucket-level labels such as `Costco groceries` and `Costco shopping`.
+
+### Fixed
+- Receipt parsing now collapses duplicate category rows into final save-ready budget totals even when the AI returns multiple rows for the same category.
+- Costco-style receipt splits are less likely to save as several separate `Groceries` rows when the intended output is a single groceries total plus a shopping total.
+
 ## [0.1.19] - 2026-03-13
 
 ### Changed
