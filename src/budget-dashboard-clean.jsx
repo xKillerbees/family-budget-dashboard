@@ -378,6 +378,130 @@ function collapseReceiptItemsByBudgetBucket(items = [], merchant = "") {
     subcat: item.subcat,
   }));
 }
+function collapseReceiptAuditRowsByBudgetBucket(rows = [], merchant = "") {
+  const groups = new Map();
+  rows.forEach((row, idx) => {
+    const cat = String(row?.cat || "").trim();
+    const subcat = normalizeTxnSubcategory(row?.subcat);
+    const itemsTotal = roundMoney(Math.abs(Number(row?.itemsTotal) || 0));
+    const tax = roundMoney(Math.abs(Number(row?.tax) || 0));
+    const rewardApplied = roundMoney(Math.abs(Number(row?.rewardApplied) || 0));
+    const computedFinal = roundMoney(Math.max(0, itemsTotal + tax - rewardApplied));
+    const finalTotal = roundMoney(Math.abs(Number(row?.finalTotal) || 0)) || computedFinal;
+    if (!cat || finalTotal <= 0) return;
+    const key = `${cat.toLowerCase()}|||${subcat.toLowerCase()}`;
+    const existing = groups.get(key) || {
+      cat,
+      subcat,
+      label: buildReceiptBudgetBucketDesc(merchant, cat, subcat) || `Receipt bucket ${idx + 1}`,
+      itemsTotal: 0,
+      tax: 0,
+      rewardApplied: 0,
+      finalTotal: 0,
+      reason: "",
+    };
+    existing.itemsTotal = roundMoney(existing.itemsTotal + itemsTotal);
+    existing.tax = roundMoney(existing.tax + tax);
+    existing.rewardApplied = roundMoney(existing.rewardApplied + rewardApplied);
+    existing.finalTotal = roundMoney(existing.finalTotal + finalTotal);
+    if (!existing.reason && String(row?.reason || "").trim()) existing.reason = String(row.reason).trim();
+    groups.set(key, existing);
+  });
+  return [...groups.values()].sort((left, right) => right.finalTotal - left.finalTotal);
+}
+function normalizeReceiptObservedTotals(payload = {}, totalChoice = null) {
+  const subtotal = parsePositiveReceiptMoney(payload, ["subtotal"]);
+  const tax = parsePositiveReceiptMoney(payload, ["tax", "sales_tax", "salesTax"]);
+  const preCreditTotal = parsePositiveReceiptMoney(payload, ["pre_credit_total", "preCreditTotal", "gross_total", "grossTotal"]);
+  const creditApplied = parsePositiveReceiptMoney(payload, ["credit_applied", "creditApplied", "reward_credit", "rewardCredit", "reward_applied", "rewardApplied", "discount_applied", "discountApplied", "coupon_total", "couponTotal", "member_savings", "memberSavings"]);
+  const paidTotal = parsePositiveReceiptMoney(payload, ["paid_total", "paidTotal", "net_total", "netTotal", "final_total", "finalTotal", "charged_total", "chargedTotal", "card_total", "cardTotal"]);
+  const totalLabel = normalizeReceiptTotalLabel(readFirstReceiptField(payload, ["total_label", "totalLabel", "paid_total_label", "paidTotalLabel", "total_source_label", "totalSourceLabel"]));
+  return {
+    subtotal: Number.isFinite(subtotal) ? subtotal : 0,
+    tax: Number.isFinite(tax) ? tax : 0,
+    preCreditTotal: Number.isFinite(preCreditTotal) ? preCreditTotal : 0,
+    creditApplied: Number.isFinite(creditApplied) ? creditApplied : 0,
+    paidTotal: Number.isFinite(paidTotal) ? paidTotal : roundMoney(Math.abs(Number(totalChoice?.amount) || 0)),
+    totalLabel,
+  };
+}
+function normalizeReceiptAuditRows(payload = {}, { receiptCats = [], fallbackCat = "", items = [], merchant = "" } = {}) {
+  const auditPayload = payload?.audit && typeof payload.audit === "object" && !Array.isArray(payload.audit) ? payload.audit : {};
+  const rawRows = Array.isArray(payload?.audit_rows) ? payload.audit_rows
+    : (Array.isArray(payload?.auditRows) ? payload.auditRows
+      : (Array.isArray(auditPayload.rows) ? auditPayload.rows : []));
+  const baseRows = rawRows.length ? rawRows : items.map(item => ({
+    cat: item.cat,
+    subcat: item.subcat,
+    items_total: item.amount,
+    final_total: item.amount,
+    reason: "Derived from parsed split",
+  }));
+  const normalized = baseRows
+    .map((row, idx) => {
+      const rawCat = String(row?.cat || row?.category || row?.budget_category || row?.budgetCategory || "").trim();
+      const cat = receiptCats.includes(rawCat) ? rawCat : (rawCat || fallbackCat);
+      if (!cat) return null;
+      const subcat = normalizeTxnSubcategory(row?.subcat || row?.subcategory);
+      const itemsTotalRaw = Math.abs(parseMoneyValue(row?.items_total ?? row?.itemsTotal ?? row?.items ?? row?.base_total ?? row?.baseTotal ?? row?.merchandise_total ?? row?.merchandiseTotal));
+      const taxRaw = Math.abs(parseMoneyValue(row?.tax ?? row?.tax_allocated ?? row?.taxAllocated));
+      const rewardRaw = Math.abs(parseMoneyValue(row?.reward_applied ?? row?.rewardApplied ?? row?.credit_applied ?? row?.creditApplied ?? row?.discount_applied ?? row?.discountApplied ?? row?.reward ?? row?.discount));
+      const finalRaw = Math.abs(parseMoneyValue(row?.final_total ?? row?.finalTotal ?? row?.amount ?? row?.total ?? row?.value));
+      const itemsTotal = Number.isFinite(itemsTotalRaw) ? itemsTotalRaw : 0;
+      const tax = Number.isFinite(taxRaw) ? taxRaw : 0;
+      const rewardApplied = Number.isFinite(rewardRaw) ? rewardRaw : 0;
+      const fallbackFinal = roundMoney(Math.max(0, itemsTotal + tax - rewardApplied));
+      const finalTotal = Number.isFinite(finalRaw) && finalRaw > 0 ? finalRaw : fallbackFinal;
+      if (finalTotal <= 0) return null;
+      return {
+        cat,
+        subcat,
+        label: buildReceiptBudgetBucketDesc(merchant, cat, subcat) || String(row?.label || row?.desc || row?.name || `${cat} ${idx + 1}`).trim(),
+        itemsTotal,
+        tax,
+        rewardApplied,
+        finalTotal,
+        reason: String(row?.reason || row?.note || row?.explanation || "").trim(),
+      };
+    })
+    .filter(Boolean);
+  return collapseReceiptAuditRowsByBudgetBucket(normalized, merchant);
+}
+function normalizeReceiptAuditWarnings(payload = {}, { expectedTotal = null, totalChoice = null, observed = {} } = {}) {
+  const auditPayload = payload?.audit && typeof payload.audit === "object" && !Array.isArray(payload.audit) ? payload.audit : {};
+  const warnings = [
+    ...(Array.isArray(payload?.warnings) ? payload.warnings : []),
+    ...(Array.isArray(payload?.audit_warnings) ? payload.audit_warnings : []),
+    ...(Array.isArray(auditPayload?.warnings) ? auditPayload.warnings : []),
+  ]
+    .map(item => String(item || "").trim())
+    .filter(Boolean);
+
+  const hintedTotal = Math.abs(parseMoneyValue(expectedTotal));
+  if (!(Number.isFinite(hintedTotal) && hintedTotal > 0)) {
+    warnings.unshift("AI estimated the charged total from the receipt. Review and adjust the split before saving if needed.");
+  }
+
+  const subtotalPlusTax = Number.isFinite(observed?.subtotal)
+    ? roundMoney((Number(observed?.subtotal) || 0) + (Number(observed?.tax) || 0))
+    : NaN;
+  const chosenAmount = Number.isFinite(Number(totalChoice?.amount)) ? roundMoney(Number(totalChoice.amount)) : NaN;
+  const creditApplied = Number.isFinite(observed?.creditApplied) ? Number(observed.creditApplied) : NaN;
+  if (Number.isFinite(subtotalPlusTax) && Number.isFinite(chosenAmount) && Math.abs(subtotalPlusTax - chosenAmount) > 0.99 && !(Number.isFinite(creditApplied) && creditApplied > 0)) {
+    warnings.unshift("Parsed charged total does not match subtotal plus tax. Double-check missing receipt sections or misread totals.");
+  }
+
+  const unique = [];
+  const seen = new Set();
+  warnings.forEach(text => {
+    const key = text.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(text);
+    }
+  });
+  return unique;
+}
 function distributeReceiptAmounts(items, targetTotal = null) {
   const cleaned = items
     .map(item => ({ ...item, amount: Math.abs(Number(item?.amount) || 0) }))
@@ -454,6 +578,9 @@ function normalizeReceiptAiResult(raw, {
   const targetTotal = totalChoice.amount;
   const items = distributeReceiptAmounts(cleanedItems, targetTotal);
   if (!items.length) throw new Error("No receipt items were usable.");
+  const observedTotals = normalizeReceiptObservedTotals(payload, totalChoice);
+  const auditRows = normalizeReceiptAuditRows(payload, { receiptCats, fallbackCat, items, merchant });
+  const auditWarnings = normalizeReceiptAuditWarnings(payload, { expectedTotal, totalChoice, observed: observedTotals });
   return {
     merchant,
     dateIso: dateInfo.iso,
@@ -461,6 +588,11 @@ function normalizeReceiptAiResult(raw, {
     year: dateInfo.year,
     total: roundMoney(items.reduce((sum, item) => sum + item.amount, 0)),
     totalNote: totalChoice.note || "",
+    audit: {
+      observedTotals,
+      rows: auditRows,
+      warnings: auditWarnings,
+    },
     items,
   };
 }
@@ -495,7 +627,7 @@ Date hint: ${dateHint || "none"}.
 Total hint: ${Number.isFinite(Number(expectedTotal)) && Number(expectedTotal) > 0 ? `$${Number(expectedTotal).toFixed(2)}` : "none"}.
 
 Return ONLY strict JSON with this exact shape:
-{"merchant":"Store name","date":"YYYY-MM-DD","paid_total":123.45,"pre_credit_total":140.00,"credit_applied":16.00,"total_label":"TOTAL","items":[{"desc":"Costco groceries","amount":96.25,"cat":"Groceries"},{"desc":"Costco shopping","amount":27.20,"cat":"Shopping"}]}
+{"merchant":"Store name","date":"YYYY-MM-DD","paid_total":123.45,"pre_credit_total":140.00,"credit_applied":16.00,"total_label":"TOTAL","audit":{"observed_totals":{"subtotal":130.00,"tax":10.00,"pre_credit_total":140.00,"credit_applied":16.00,"paid_total":124.00},"rows":[{"cat":"Groceries","items_total":100.00,"tax":7.00,"reward_applied":12.00,"final_total":95.00,"reason":"Food items"},{"cat":"Shopping","items_total":30.00,"tax":3.00,"reward_applied":4.00,"final_total":29.00,"reason":"Household goods"}],"warnings":["If uncertain, review before saving."]},"items":[{"desc":"Costco groceries","amount":96.25,"cat":"Groceries"},{"desc":"Costco shopping","amount":27.20,"cat":"Shopping"}]}
 
 Rules:
 - Read the merchant, purchase date, and final paid total from the image when visible.
@@ -512,6 +644,7 @@ Rules:
 - Pet food/litter, filters, household supplies, paper goods, personal care, diapers, clothing, and other non-food goods belong in Shopping unless a more specific allowed category exists.
 - Every item amount must be positive.
 - If tax, discounts, or fees appear, distribute them into the final positive item amounts so the item amounts sum exactly to the total.
+- Also return an "audit" block that shows how you allocated subtotal, tax, and reward/discount amounts across the final budget rows.
 - Use only the allowed categories.
 - Make descriptions concise, store-aware, and bucket-level, such as "Costco groceries" or "Costco shopping".
 - If the image is ambiguous, use the hints as fallback.
@@ -924,6 +1057,7 @@ function Summary({wide, isMobile}) {
                 const over = r.kc && displayVal > r.kc;
                 const pct  = takeHome > 0 ? (displayVal / takeHome) * 100 : 0;
                 const targetPct = r.kc > 0 ? Math.min((displayVal / r.kc) * 100, 100) : 0;
+                const mobileBarPct = r.kc > 0 ? targetPct : Math.min(pct * 2.5, 100);
                 const targetDelta = r.kc ? (r.kc - displayVal) : null;
                 const isOpen = expandedCat === r.cat;
                 const txns = txnsFor(r.cat);
@@ -949,12 +1083,9 @@ function Summary({wide, isMobile}) {
                           <span style={{fontSize:14,color:isOpen?r.color:MUTED,transition:"transform .2s",display:"inline-block",transform:isOpen?"rotate(180deg)":"none"}}>▾</span>
                         </div>
                       </div>
-                      <PBar pct={pct*2.5} color={r.color} h={4}/>
+                      <PBar pct={mobileBarPct} color={r.color} h={4}/>
                       {r.kc && (
                         <div style={{marginTop:8}}>
-                          <div style={{height:3,borderRadius:99,background:r.color+"22",overflow:"hidden"}}>
-                            <div style={{height:"100%",width:`${targetPct}%`,background:r.color,borderRadius:99,transition:"width .4s"}}/>
-                          </div>
                           <div style={{fontSize:11,color:targetDelta >= 0 ? "#22c55e" : "#ef4444",marginTop:4,fontWeight:700,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
                             {targetDelta >= 0 ? `${fmt(targetDelta)} remains` : `${fmt(Math.abs(targetDelta))} over`} ({Math.round((displayVal / r.kc) * 100)}%)
                           </div>
@@ -2689,7 +2820,13 @@ function TxnTable({ src, isMobile }) {
   const [receiptParsing, setReceiptParsing] = useState(false);
   const [receiptParseErr, setReceiptParseErr] = useState(null);
   const [receiptParts, setReceiptParts] = useState([]);
-  const [receiptMeta, setReceiptMeta] = useState({ merchant: "", dateIso: "", total: 0, totalNote: "" });
+  const [receiptMeta, setReceiptMeta] = useState({
+    merchant: "",
+    dateIso: "",
+    total: 0,
+    totalNote: "",
+    audit: { observedTotals: {}, rows: [], warnings: [] },
+  });
   const receiptCats = getReceiptBudgetCats(allCats);
   const fallbackReceiptCat = receiptCats.includes("Snacks/Misc") ? "Snacks/Misc" : (receiptCats[0] || allCats[0]);
   useEffect(() => { if (addFeedback) setAddFeedback(null); }, [monthFilter, catFilter, search, sortBy, showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2700,13 +2837,33 @@ function TxnTable({ src, isMobile }) {
     : 0;
   const receiptRemaining = roundMoney(receiptTargetTotal - receiptAllocatedTotal);
   const receiptBalanced = !receiptParts.length || Math.abs(receiptRemaining) < 0.01;
+  const receiptAuditObserved = receiptMeta.audit?.observedTotals || {};
+  const receiptAuditRows = Array.isArray(receiptMeta.audit?.rows) ? receiptMeta.audit.rows : [];
+  const receiptAuditWarnings = Array.isArray(receiptMeta.audit?.warnings) ? receiptMeta.audit.warnings : [];
+  const currentSplitSummary = useMemo(() => collapseReceiptAuditRowsByBudgetBucket(
+    receiptParts.map(part => ({
+      cat: part.cat,
+      subcat: part.subcat,
+      itemsTotal: parseFloat(part.amount) || 0,
+      finalTotal: parseFloat(part.amount) || 0,
+    })),
+    receiptMeta.merchant || newDesc,
+  ), [receiptParts, receiptMeta.merchant, newDesc]);
+  const hasReceiptObservedTotals = !!receiptAuditObserved.totalLabel
+    || ["subtotal", "tax", "preCreditTotal", "creditApplied", "paidTotal"].some(key => Number(receiptAuditObserved?.[key]) > 0);
 
   const resetReceiptDraft = () => {
     setReceiptImgPreview(null);
     setReceiptParsing(false);
     setReceiptParseErr(null);
     setReceiptParts([]);
-    setReceiptMeta({ merchant: "", dateIso: "", total: 0, totalNote: "" });
+    setReceiptMeta({
+      merchant: "",
+      dateIso: "",
+      total: 0,
+      totalNote: "",
+      audit: { observedTotals: {}, rows: [], warnings: [] },
+    });
   };
 
   const updateReceiptPart = (idx, field, value) => {
@@ -2750,6 +2907,7 @@ function TxnTable({ src, isMobile }) {
         dateIso: parsed.dateIso || "",
         total: parsed.total || 0,
         totalNote: parsed.totalNote || "",
+        audit: parsed.audit || { observedTotals: {}, rows: [], warnings: [] },
       });
       setReceiptParts(parsed.items.map(item => ({
         desc: item.desc || "",
@@ -3086,6 +3244,79 @@ function TxnTable({ src, isMobile }) {
               {receiptMeta.totalNote && (
                 <div style={{fontSize:11,color:MUTED,marginTop:8}}>
                   Total source: {receiptMeta.totalNote}
+                </div>
+              )}
+              {receiptParts.length > 0 && (
+                <div style={{marginTop:12,padding:"12px 14px",borderRadius:10,background:"#0b1220",border:`1px solid ${BORDER}`}}>
+                  <div style={{fontSize:12,fontWeight:800,color:TEXT,marginBottom:4}}>Review Before Saving</div>
+                  <div style={{fontSize:11,color:MUTED,marginBottom:10}}>
+                    These are the parsed results used to build the editable split. Review them here, then change any amount or category below before saving.
+                  </div>
+
+                  {hasReceiptObservedTotals && (
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+                      {Number(receiptAuditObserved.subtotal) > 0 && <Tag color="#475569">Subtotal {money2(receiptAuditObserved.subtotal)}</Tag>}
+                      {Number(receiptAuditObserved.tax) > 0 && <Tag color="#0ea5e9">Tax {money2(receiptAuditObserved.tax)}</Tag>}
+                      {Number(receiptAuditObserved.preCreditTotal) > 0 && <Tag color="#f59e0b">Pre-credit {money2(receiptAuditObserved.preCreditTotal)}</Tag>}
+                      {Number(receiptAuditObserved.creditApplied) > 0 && <Tag color="#ef4444">Reward/Discount {money2(receiptAuditObserved.creditApplied)}</Tag>}
+                      {Number(receiptAuditObserved.paidTotal) > 0 && <Tag color="#22c55e">Paid total {money2(receiptAuditObserved.paidTotal)}</Tag>}
+                      {receiptAuditObserved.totalLabel && <Tag color="#8b5cf6">{receiptAuditObserved.totalLabel}</Tag>}
+                    </div>
+                  )}
+
+                  {receiptAuditWarnings.length > 0 && (
+                    <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+                      {receiptAuditWarnings.map((warning, idx) => (
+                        <div key={`${warning}-${idx}`} style={{fontSize:11,color:"#fbbf24",background:"#f59e0b11",borderRadius:8,padding:"7px 10px",border:"1px solid #f59e0b22"}}>
+                          {warning}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {receiptAuditRows.length > 0 && (
+                    <div style={{marginBottom:10}}>
+                      <div style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase",marginBottom:6}}>AI Audit Allocation</div>
+                      <div style={{overflowX:"auto"}}>
+                        <div style={{minWidth:540}}>
+                          <div style={{display:"grid",gridTemplateColumns:"minmax(140px,1fr) 84px 84px 108px 92px",gap:8,padding:"0 2px 6px"}}>
+                            {["Category","Items","Tax","Reward Applied","Final"].map(label => (
+                              <div key={label} style={{fontSize:10,color:DIM,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px"}}>{label}</div>
+                            ))}
+                          </div>
+                          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                            {receiptAuditRows.map((row, idx) => (
+                              <div key={`${row.cat}-${row.subcat}-${idx}`} style={{display:"grid",gridTemplateColumns:"minmax(140px,1fr) 84px 84px 108px 92px",gap:8,alignItems:"center",background:BG,borderRadius:8,padding:"8px 10px"}}>
+                                <div>
+                                  <div style={{fontSize:12,color:TEXT,fontWeight:700}}>{row.subcat ? `${row.cat} / ${row.subcat}` : row.cat}</div>
+                                  {row.reason && <div style={{fontSize:10,color:MUTED,marginTop:2}}>{row.reason}</div>}
+                                </div>
+                                <div style={{fontSize:12,color:TEXT,fontVariantNumeric:"tabular-nums"}}>{money2(row.itemsTotal)}</div>
+                                <div style={{fontSize:12,color:TEXT,fontVariantNumeric:"tabular-nums"}}>{money2(row.tax)}</div>
+                                <div style={{fontSize:12,color:"#fca5a5",fontVariantNumeric:"tabular-nums"}}>-{money2(row.rewardApplied)}</div>
+                                <div style={{fontSize:12,color:"#22c55e",fontWeight:800,fontVariantNumeric:"tabular-nums"}}>{money2(row.finalTotal)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {currentSplitSummary.length > 0 && (
+                    <div>
+                      <div style={{fontSize:11,color:MUTED,fontWeight:700,textTransform:"uppercase",marginBottom:6}}>Current Split Summary</div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                        {currentSplitSummary.map((row, idx) => (
+                          <div key={`${row.cat}-${row.subcat}-${idx}`} style={{padding:"8px 10px",borderRadius:8,background:BG,border:`1px solid ${BORDER}`}}>
+                            <div style={{fontSize:11,color:MUTED}}>{row.subcat ? `${row.cat} / ${row.subcat}` : row.cat}</div>
+                            <div style={{fontSize:13,color:"#22c55e",fontWeight:800,fontVariantNumeric:"tabular-nums"}}>{money2(row.finalTotal)}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{fontSize:11,color:MUTED,marginTop:8}}>Edit the split lines below and this summary updates live before you save.</div>
+                    </div>
+                  )}
                 </div>
               )}
               {receiptParseErr && <div style={{fontSize:11,color:"#f59e0b",marginTop:8,padding:"6px 10px",background:"#f59e0b11",borderRadius:6}}>{receiptParseErr}</div>}
@@ -6774,16 +7005,19 @@ Do NOT include a "cat" field.`;
   };
 
   const duplicateRows = useMemo(() => {
-    const prepare = txn => {
+    const prepare = (txn, sourceIndex = null) => {
       const year = deriveTxnYear(txn, selectedYear);
       const date = fingerprintTxnDate(txn?.date);
       const amount = Number(txn?.amount);
       return {
         year,
         date,
+        desc: String(txn?.desc || "").trim(),
         amountCents: Number.isFinite(amount) ? Math.round(amount * 100) : null,
+        amount,
         exactKey: buildTxnFingerprint(txn, selectedYear),
         merchant: buildMerchantSignature(txn?.desc),
+        sourceIndex: Number.isInteger(sourceIndex) ? sourceIndex : null,
       };
     };
     const existingTxns = stmtSrc === "checking" ? checkTxns : ccTxns;
@@ -6792,7 +7026,7 @@ Do NOT include a "cat" field.`;
       .filter(t => t.date && Number.isFinite(t.amountCents) && Number.isFinite(t.year));
     const existingSplitGroups = collectSplitDuplicateGroups(existingTxns, selectedYear)
       .filter(group => group.date && Number.isFinite(group.totalCents) && Number.isFinite(group.year));
-    const reviewPrepared = reviewed.map(t => prepare({ ...t, year: selectedYear }));
+    const reviewPrepared = reviewed.map((t, reviewIdx) => prepare({ ...t, year: selectedYear }, reviewIdx));
     const exactCounts = new Map();
     reviewPrepared.forEach(item => {
       if (!item.exactKey) return;
@@ -6805,18 +7039,46 @@ Do NOT include a "cat" field.`;
       const sameSlotSplitGroups = existingSplitGroups.filter(other =>
         other.year === item.year && other.date === item.date && other.totalCents === item.amountCents
       );
-      const matchesExisting = !!item.exactKey && sameSlotExisting.some(other => other.exactKey === item.exactKey);
-      const possibleExisting = !matchesExisting && sameSlotExisting.some(other => merchantSimilarity(item.merchant, other.merchant) >= 0.7);
-      const matchesExistingSplit = !matchesExisting && !!item.exactKey && sameSlotSplitGroups.some(other => other.exactKey === item.exactKey);
-      const possibleExistingSplit = !matchesExisting && !possibleExisting && !matchesExistingSplit && sameSlotSplitGroups.some(other => merchantSimilarity(item.merchant, other.merchant) >= 0.7);
+      const exactExistingMatches = !!item.exactKey ? sameSlotExisting.filter(other => other.exactKey === item.exactKey) : [];
+      const possibleExistingMatches = !exactExistingMatches.length
+        ? sameSlotExisting.filter(other => merchantSimilarity(item.merchant, other.merchant) >= 0.7)
+        : [];
+      const exactSplitMatches = !exactExistingMatches.length && !!item.exactKey
+        ? sameSlotSplitGroups.filter(other => other.exactKey === item.exactKey)
+        : [];
+      const possibleSplitMatches = !exactExistingMatches.length && !possibleExistingMatches.length && !exactSplitMatches.length
+        ? sameSlotSplitGroups.filter(other => merchantSimilarity(item.merchant, other.merchant) >= 0.7)
+        : [];
+      const exactImportMatches = !!item.exactKey
+        ? reviewPrepared.filter((other, otherIdx) => otherIdx !== idx && other.exactKey === item.exactKey)
+        : [];
+      const possibleImportMatches = !exactImportMatches.length
+        ? reviewPrepared.filter((other, otherIdx) =>
+          otherIdx !== idx
+          && other.year === item.year
+          && other.date === item.date
+          && other.amountCents === item.amountCents
+          && merchantSimilarity(item.merchant, other.merchant) >= 0.7
+        )
+        : [];
+      const matchesExisting = exactExistingMatches.length > 0;
+      const possibleExisting = !matchesExisting && possibleExistingMatches.length > 0;
+      const matchesExistingSplit = !matchesExisting && exactSplitMatches.length > 0;
+      const possibleExistingSplit = !matchesExisting && !possibleExisting && !matchesExistingSplit && possibleSplitMatches.length > 0;
       const repeatsInImport = !!item.exactKey && (exactCounts.get(item.exactKey) || 0) > 1;
-      const possibleRepeatInImport = !repeatsInImport && reviewPrepared.some((other, otherIdx) =>
-        otherIdx !== idx
-        && other.year === item.year
-        && other.date === item.date
-        && other.amountCents === item.amountCents
-        && merchantSimilarity(item.merchant, other.merchant) >= 0.7
-      );
+      const possibleRepeatInImport = !repeatsInImport && possibleImportMatches.length > 0;
+      const referenceLines = [
+        buildDuplicateReferenceLine("Existing match", exactExistingMatches, match => summarizeTxnDuplicateRef(match)),
+        buildDuplicateReferenceLine("Possible existing", possibleExistingMatches, match => summarizeTxnDuplicateRef(match)),
+        buildDuplicateReferenceLine("Split match", exactSplitMatches, match => summarizeSplitGroupDuplicateRef(match)),
+        buildDuplicateReferenceLine("Possible split", possibleSplitMatches, match => summarizeSplitGroupDuplicateRef(match)),
+        buildDuplicateReferenceLine("Repeated in import", exactImportMatches, match => summarizeTxnDuplicateRef(match, {
+          rowNumber: Number.isInteger(match.sourceIndex) ? match.sourceIndex + 1 : null,
+        })),
+        buildDuplicateReferenceLine("Possible repeat", possibleImportMatches, match => summarizeTxnDuplicateRef(match, {
+          rowNumber: Number.isInteger(match.sourceIndex) ? match.sourceIndex + 1 : null,
+        })),
+      ].filter(Boolean);
       return {
         matchesExisting,
         possibleExisting,
@@ -6824,6 +7086,7 @@ Do NOT include a "cat" field.`;
         possibleExistingSplit,
         repeatsInImport,
         possibleRepeatInImport,
+        referenceLines,
         flagged: matchesExisting || possibleExisting || matchesExistingSplit || possibleExistingSplit || repeatsInImport || possibleRepeatInImport,
       };
     });
@@ -7121,6 +7384,19 @@ Do NOT include a "cat" field.`;
                             {duplicateInfo.repeatsInImport && <span style={{fontSize:9,fontWeight:700,background:"#fb923c22",color:"#fdba74",border:"1px solid #fb923c33",borderRadius:4,padding:"1px 4px"}}>↺ repeated in file</span>}
                             {duplicateInfo.possibleRepeatInImport && <span style={{fontSize:9,fontWeight:700,background:"#fb923c22",color:"#fdba74",border:"1px solid #fb923c33",borderRadius:4,padding:"1px 4px"}}>≈ possible repeat</span>}
                           </div>
+                          {duplicateInfo.referenceLines?.length > 0 && (
+                            <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:4}}>
+                              {duplicateInfo.referenceLines.map((line, lineIdx) => (
+                                <div
+                                  key={`${idx}-${lineIdx}`}
+                                  title={line}
+                                  style={{fontSize:10,color:"#fcd34d",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}
+                                >
+                                  {line}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                     }
                     {t.note&&<div style={{fontSize:10,color:DIM,marginTop:1}}>{t.note}</div>}
@@ -7442,6 +7718,44 @@ function collectSplitDuplicateGroups(txns = [], fallbackYear = null) {
         : null,
     }))
     .filter(group => group.txnCount > 1 || Number.isFinite(group.parentAmountCents));
+}
+function formatDuplicateAmount(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "";
+  return `${amount < 0 ? "+" : ""}${fmt(amount)}`;
+}
+function compactDuplicateDesc(desc, max = 56) {
+  const text = String(desc || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+function summarizeTxnDuplicateRef(txn, { rowNumber = null } = {}) {
+  const parts = [];
+  if (Number.isInteger(rowNumber)) parts.push(`row ${rowNumber}`);
+  const date = fingerprintTxnDate(txn?.date);
+  if (date) parts.push(date);
+  const desc = compactDuplicateDesc(txn?.desc);
+  if (desc) parts.push(desc);
+  const amount = formatDuplicateAmount(txn?.amount);
+  if (amount) parts.push(amount);
+  return parts.join(" · ");
+}
+function summarizeSplitGroupDuplicateRef(group) {
+  const parts = [];
+  const date = fingerprintTxnDate(group?.date);
+  if (date) parts.push(date);
+  const desc = compactDuplicateDesc(group?.parentDesc || group?.desc);
+  if (desc) parts.push(desc);
+  if (Number.isFinite(group?.totalCents)) parts.push(fmt(group.totalCents / 100));
+  if ((Number(group?.txnCount) || 0) > 1) parts.push(`${group.txnCount} splits`);
+  return parts.join(" · ");
+}
+function buildDuplicateReferenceLine(label, matches, formatter) {
+  if (!Array.isArray(matches) || !matches.length) return "";
+  const summary = formatter(matches[0]);
+  if (!summary) return "";
+  const more = matches.length > 1 ? ` (+${matches.length - 1} more)` : "";
+  return `${label}: ${summary}${more}`;
 }
 function monthYearValue(year, month) {
   const safeYear = Number(year);

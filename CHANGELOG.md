@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.21] - 2026-03-25
+
+### Changed
+- Import review duplicate warnings now show a short cross-reference to the matched existing transaction, split group, or repeated import row so you can compare before confirming.
+
+### Fixed
+- Summary cards on mobile now render a single progress line per category instead of stacking two bars for categories with KC targets.
+
 ## [0.1.20] - 2026-03-13
 
 ### Changed
