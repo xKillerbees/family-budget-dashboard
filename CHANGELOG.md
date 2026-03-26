@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.24] - 2026-03-25
+
+### Fixed
+- Payoffs edit fields now keep number inputs as editable draft text until save, so monthly payment, balance, APR, and current-balance values can be replaced directly without relying on the browser stepper controls.
+
 ## [0.1.23] - 2026-03-25
 
 ### Added

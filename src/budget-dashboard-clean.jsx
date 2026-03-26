@@ -2030,6 +2030,44 @@ function computePayoffStats(payoff, allTxns = []) {
     ...projection,
   };
 }
+function buildPayoffDraft(payoff = {}) {
+  const origBalance = payoff?.origBalance ?? payoff?.balance ?? "";
+  const rawManualBalance = payoff?.manualBalance;
+  const rawInterestRate = payoff?.interestRate;
+  return {
+    ...payoff,
+    name: String(payoff?.name || ""),
+    payment: payoff?.payment == null ? "" : String(payoff.payment),
+    balance: origBalance === "" ? "" : String(origBalance),
+    origBalance: origBalance === "" ? "" : String(origBalance),
+    manualBalance: Number(rawManualBalance) > 0 ? String(rawManualBalance) : "",
+    interestRate: rawInterestRate == null ? "" : String(Math.max(0, Number(rawInterestRate) || 0)),
+    icon: payoff?.icon || "💳",
+    color: payoff?.color || "#22c55e",
+    keywords: String(payoff?.keywords || ""),
+  };
+}
+function normalizePayoffInput(payoff = {}, fallbackId = "") {
+  const origBalRaw = payoff?.origBalance ?? payoff?.balance ?? "";
+  const origBal = Math.max(0, parseMoneyValue(origBalRaw) || 0);
+  const payment = Math.max(0, Number(payoff?.payment) || 0);
+  const manualBalance = Math.max(0, parseMoneyValue(payoff?.manualBalance) || 0);
+  const interestRate = Math.max(0, Number(payoff?.interestRate) || 0);
+  return {
+    ...payoff,
+    id: payoff?.id || fallbackId || "",
+    name: String(payoff?.name || "").trim(),
+    payment,
+    balance: origBal,
+    origBalance: origBal,
+    manualBalance,
+    interestRate,
+    icon: payoff?.icon || "💳",
+    balanceStr: origBal > 0 ? fmt(origBal) : "$0.00",
+    color: payoff?.color || "#22c55e",
+    keywords: String(payoff?.keywords || "").trim(),
+  };
+}
 
 function Payoffs({wide}) {
   const { payoffs, setPayoffs, normSurplus, checkTxns, ccTxns, selectedMonth } = useBudget();
@@ -2064,20 +2102,12 @@ function Payoffs({wide}) {
   const addPayoff = () => {
     if(!newDebt.name || !newDebt.payment) return;
     const id = "p" + Date.now();
-    const origBal = parseFloat((newDebt.balance||"0").replace(/[$,]/g,""))||0;
-    const p = {
+    const p = normalizePayoffInput({
       id,
-      name:        newDebt.name,
-      payment:     parseFloat(newDebt.payment)||0,
-      balance:       origBal,
-      origBalance:   origBal,
-      manualBalance: parseFloat(newDebt.manualBalance) || 0,
-      interestRate:  Math.max(0, parseFloat(newDebt.interestRate) || 0),
-      icon:          newDebt.icon || "💳",
-      balanceStr:    newDebt.balance || "$0",
-      color:         newDebt.color,
-      keywords:      newDebt.keywords || "",
-    };
+      ...newDebt,
+      icon: newDebt.icon || "💳",
+      color: newDebt.color,
+    }, id);
     setPayoffs(prev => [...prev, p]);
     setEnabled(prev => new Set([...prev, id]));
     setNewDebt({ name:"", payment:"", balance:"", manualBalance:"", interestRate:"", icon:"💳", color:"#22c55e", keywords:"" });
@@ -2174,10 +2204,10 @@ function Payoffs({wide}) {
                   {!isEdit && stats.interestRate > 0 && <Tag color="#f59e0b">{stats.interestRate.toFixed(2)}% APR</Tag>}
                   <button onClick={() => {
                     if (isEdit) {
-                      setPayoffs(prev => prev.map(q => q.id === p.id ? {...q, ...editDraft} : q));
+                      setPayoffs(prev => prev.map(q => q.id === p.id ? normalizePayoffInput({ ...q, ...editDraft }, p.id) : q));
                       setEditId(null); setEditDraft({});
                     } else {
-                      setEditId(p.id); setEditDraft({...p});
+                      setEditId(p.id); setEditDraft(buildPayoffDraft(p));
                     }
                   }} style={{
                     padding:isCompactMobile?"4px 8px":"3px 9px",borderRadius:8,fontSize:isCompactMobile?10:11,fontWeight:700,cursor:"pointer",
@@ -2211,13 +2241,13 @@ function Payoffs({wide}) {
               {isEdit ? (
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
                   <FieldInput label="Monthly Payment $" val={editDraft.payment ?? ""}
-                    onChange={v=>setEditDraft(d=>({...d,payment:parseFloat(v)||0}))} type="number" placeholder="460"/>
+                    onChange={v=>setEditDraft(d=>({...d,payment:v}))} type="number" step="0.01" placeholder="460"/>
                   <FieldInput label="Orig. Balance $" val={editDraft.origBalance ?? editDraft.balance ?? ""}
-                    onChange={v=>{const n=parseFloat(v)||0; setEditDraft(d=>({...d,origBalance:n,balance:n}));}} type="number" placeholder="12000"/>
+                    onChange={v=>setEditDraft(d=>({...d,origBalance:v,balance:v}))} type="number" step="0.01" placeholder="12000"/>
                   <FieldInput label="Interest Rate % APR" val={editDraft.interestRate ?? ""}
-                    onChange={v=>setEditDraft(d=>({...d,interestRate:Math.max(0, parseFloat(v) || 0)}))} type="number" step="0.01" placeholder="6.25"/>
-                  <FieldInput label="Current Balance $ (override)" val={editDraft.manualBalance || ""}
-                    onChange={v=>setEditDraft(d=>({...d,manualBalance:parseFloat(v)||0}))} type="number" placeholder="Leave blank for auto"/>
+                    onChange={v=>setEditDraft(d=>({...d,interestRate:v}))} type="number" step="0.01" placeholder="6.25"/>
+                  <FieldInput label="Current Balance $ (override)" val={editDraft.manualBalance ?? ""}
+                    onChange={v=>setEditDraft(d=>({...d,manualBalance:v}))} type="number" step="0.01" placeholder="Leave blank for auto"/>
                   <div style={{display:"flex",flexDirection:"column",gap:4}}>
                     <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px"}}>Icon</div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
