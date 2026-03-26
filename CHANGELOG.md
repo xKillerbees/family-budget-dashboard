@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.23] - 2026-03-25
+
+### Added
+- Payoffs now support entering an APR so interest-bearing debts like student loans can be projected more realistically.
+
+### Changed
+- Payoff dates and months-left estimates now use interest-aware amortization math instead of assuming each payment reduces principal dollar-for-dollar.
+
+### Fixed
+- Payoff forecasts now warn when an estimated balance comes from keyword-matched payments on an interest-bearing debt and when a payment is too low to cover monthly interest.
+
 ## [0.1.22] - 2026-03-25
 
 ### Fixed

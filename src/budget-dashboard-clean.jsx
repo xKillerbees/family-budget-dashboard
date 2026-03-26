@@ -108,10 +108,10 @@ const ABA_OPTIONS = [
 ];
 
 const PAYOFFS_INIT = [
-  { id:"p1", name:"Car Loan",     payment:460.00,  balance:2280,   origBalance:2280,   manualBalance:0, icon:"🚗", balanceStr:"$2,280",  date:"Jul 2026",  months:"5 left",  pct:95, color:"#22c55e", keywords:"" },
-  { id:"p2", name:"Credit Card",  payment:151.22,  balance:1586,   origBalance:1586,   manualBalance:0, icon:"💳", balanceStr:"$1,586",  date:"Jan 2027",  months:"11 left", pct:65, color:"#a78bfa", keywords:"" },
-  { id:"p3", name:"Auto Loan",    payment:507.03,  balance:17670,  origBalance:17670,  manualBalance:0, icon:"🚙", balanceStr:"$17,670", date:"Mar 2029",  months:"37 left", pct:30, color:"#64748b", keywords:"" },
-  { id:"p4", name:"Student Loan", payment:201.09,  balance:25000,  origBalance:25000,  manualBalance:0, icon:"🎓", balanceStr:"$25,000", date:"Long-term", months:"TBD",     pct:5,  color:"#475569", keywords:"" },
+  { id:"p1", name:"Car Loan",     payment:460.00,  balance:2280,   origBalance:2280,   manualBalance:0, interestRate:0, icon:"🚗", balanceStr:"$2,280",  date:"Jul 2026",  months:"5 left",  pct:95, color:"#22c55e", keywords:"" },
+  { id:"p2", name:"Credit Card",  payment:151.22,  balance:1586,   origBalance:1586,   manualBalance:0, interestRate:0, icon:"💳", balanceStr:"$1,586",  date:"Jan 2027",  months:"11 left", pct:65, color:"#a78bfa", keywords:"" },
+  { id:"p3", name:"Auto Loan",    payment:507.03,  balance:17670,  origBalance:17670,  manualBalance:0, interestRate:0, icon:"🚙", balanceStr:"$17,670", date:"Mar 2029",  months:"37 left", pct:30, color:"#64748b", keywords:"" },
+  { id:"p4", name:"Student Loan", payment:201.09,  balance:25000,  origBalance:25000,  manualBalance:0, interestRate:0, icon:"🎓", balanceStr:"$25,000", date:"Long-term", months:"TBD",     pct:5,  color:"#475569", keywords:"" },
 ];
 
 const CAT_COLORS = {
@@ -1912,13 +1912,124 @@ function ABAPlanner({wide}) {
 const PAYOFF_COLORS = ["#22c55e","#a78bfa","#64748b","#475569","#f59e0b","#ef4444","#06b6d4","#ec4899","#3b82f6","#10b981"];
 
 // Defined at module level so React doesn't remount it on every parent re-render
-const FieldInput = ({label, val, onChange, type="text", placeholder=""}) => (
+const FieldInput = ({label, val, onChange, type="text", placeholder="", step}) => (
   <div>
     <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:4}}>{label}</div>
-    <input type={type} value={val} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
+    <input type={type} value={val} onChange={e=>onChange(e.target.value)} placeholder={placeholder} step={step}
       style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:8,padding:"7px 10px",color:TEXT,fontSize:13,outline:"none"}}/>
   </div>
 );
+
+function parsePayoffKeywords(keywords = "") {
+  return String(keywords || "")
+    .split(",")
+    .map(k => k.trim().toLowerCase())
+    .filter(Boolean);
+}
+function buildProjectedPayoffDate(monthsLeft) {
+  if (monthsLeft === null) return "TBD";
+  if (monthsLeft <= 0) return "Paid off!";
+  const d = new Date();
+  d.setMonth(d.getMonth() + monthsLeft);
+  return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()] + " " + d.getFullYear();
+}
+function projectPayoffFromBalance(currentBalance, payment, interestRate = 0) {
+  const balance = Math.max(0, Number(currentBalance) || 0);
+  const pmt = Math.max(0, Number(payment) || 0);
+  const annualRate = Math.max(0, Number(interestRate) || 0);
+  const monthlyRate = annualRate / 1200;
+  const monthlyInterest = roundMoney(balance * monthlyRate);
+  const principalPerPayment = roundMoney(Math.max(0, pmt - monthlyInterest));
+
+  if (balance <= 0) {
+    return {
+      monthsLeft: 0,
+      payoffDate: "Paid off!",
+      monthlyInterest: 0,
+      principalPerPayment: 0,
+      blockedReason: "",
+      totalInterest: 0,
+    };
+  }
+  if (pmt <= 0) {
+    return {
+      monthsLeft: null,
+      payoffDate: "TBD",
+      monthlyInterest,
+      principalPerPayment: 0,
+      blockedReason: "No payment set",
+      totalInterest: null,
+    };
+  }
+  if (monthlyRate > 0 && pmt <= monthlyInterest + 0.005) {
+    return {
+      monthsLeft: null,
+      payoffDate: "Payment too low",
+      monthlyInterest,
+      principalPerPayment,
+      blockedReason: "Payment does not cover interest",
+      totalInterest: null,
+    };
+  }
+
+  let remaining = balance;
+  let months = 0;
+  let totalInterest = 0;
+  while (remaining > 0.01 && months < 1200) {
+    const interest = remaining * monthlyRate;
+    totalInterest += interest;
+    remaining = remaining + interest - pmt;
+    months += 1;
+    if (remaining < 0) remaining = 0;
+  }
+  if (remaining > 0.01) {
+    return {
+      monthsLeft: null,
+      payoffDate: "Long-term",
+      monthlyInterest,
+      principalPerPayment,
+      blockedReason: "Projection exceeded 100 years",
+      totalInterest: roundMoney(totalInterest),
+    };
+  }
+  return {
+    monthsLeft: months,
+    payoffDate: buildProjectedPayoffDate(months),
+    monthlyInterest,
+    principalPerPayment,
+    blockedReason: "",
+    totalInterest: roundMoney(totalInterest),
+  };
+}
+function computePayoffStats(payoff, allTxns = []) {
+  const orig = Number(payoff?.origBalance ?? payoff?.balance) || 0;
+  const pmt = Number(payoff?.payment) || 0;
+  const manual = Number(payoff?.manualBalance) || 0;
+  const interestRate = Math.max(0, Number(payoff?.interestRate) || 0);
+  const kws = parsePayoffKeywords(payoff?.keywords);
+  const matchedTxns = kws.length ? allTxns.filter(t => {
+    const hay = `${t.desc || ""} ${t.note || ""}`.toLowerCase();
+    return kws.some(kw => hay.includes(kw));
+  }) : [];
+  const paid = roundMoney(matchedTxns.reduce((s, t) => s + Math.abs(parseFloat(t.amount) || 0), 0));
+  const currentBalance = roundMoney(manual > 0 ? manual : (kws.length && orig > 0 ? Math.max(0, orig - paid) : orig));
+  const auto = !manual && kws.length > 0 && orig > 0;
+  const estimateWarning = auto && interestRate > 0
+    ? "Keyword balance estimate does not include accrued interest. Set current balance for accuracy."
+    : "";
+  const pct = orig > 0 ? Math.min(100, Math.round(((orig - currentBalance) / orig) * 100)) : 0;
+  const projection = projectPayoffFromBalance(currentBalance, pmt, interestRate);
+  return {
+    currentBalance,
+    pct,
+    paid,
+    auto,
+    estimateWarning,
+    interestRate,
+    matchedTxns,
+    ...projection,
+  };
+}
 
 function Payoffs({wide}) {
   const { payoffs, setPayoffs, normSurplus, checkTxns, ccTxns, selectedMonth } = useBudget();
@@ -1936,7 +2047,7 @@ function Payoffs({wide}) {
   const [editDraft, setEditDraft] = useState({});
   const [auditOpenId, setAuditOpenId] = useState(null);
   const [adding,  setAdding]    = useState(false);
-  const [newDebt, setNewDebt]   = useState({ name:"", payment:"", balance:"", manualBalance:"", icon:"💳", color:"#22c55e", keywords:"" });
+  const [newDebt, setNewDebt]   = useState({ name:"", payment:"", balance:"", manualBalance:"", interestRate:"", icon:"💳", color:"#22c55e", keywords:"" });
 
   const toggle = id => setEnabled(prev => { const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; });
 
@@ -1961,6 +2072,7 @@ function Payoffs({wide}) {
       balance:       origBal,
       origBalance:   origBal,
       manualBalance: parseFloat(newDebt.manualBalance) || 0,
+      interestRate:  Math.max(0, parseFloat(newDebt.interestRate) || 0),
       icon:          newDebt.icon || "💳",
       balanceStr:    newDebt.balance || "$0",
       color:         newDebt.color,
@@ -1968,36 +2080,11 @@ function Payoffs({wide}) {
     };
     setPayoffs(prev => [...prev, p]);
     setEnabled(prev => new Set([...prev, id]));
-    setNewDebt({ name:"", payment:"", balance:"", manualBalance:"", icon:"💳", color:"#22c55e", keywords:"" });
+    setNewDebt({ name:"", payment:"", balance:"", manualBalance:"", interestRate:"", icon:"💳", color:"#22c55e", keywords:"" });
     setAdding(false);
   };
 
   const allTxns = [...checkTxns, ...ccTxns].filter(t => !t.excludeFromTags);
-
-  // Compute live balance, progress, and time-to-payoff for a debt
-  const getPayoffStats = (p) => {
-    const orig    = p.origBalance || p.balance || 0;
-    const pmt     = parseFloat(p.payment) || 0;
-    const manual  = parseFloat(p.manualBalance) || 0;
-    const kws     = (p.keywords || "").split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
-    const mkDate  = (mo) => {
-      if (mo === null) return "TBD";
-      if (mo <= 0) return "Paid off!";
-      const d = new Date(); d.setMonth(d.getMonth() + mo);
-      return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()] + " " + d.getFullYear();
-    };
-    const matchedTxns = kws.length ? allTxns.filter(t => {
-      const hay = `${t.desc || ""} ${t.note || ""}`.toLowerCase();
-      return kws.some(kw => hay.includes(kw));
-    }) : [];
-    const paid = matchedTxns.reduce((s, t) => s + Math.abs(parseFloat(t.amount) || 0), 0);
-    // Priority: manual override > keyword-computed > origBalance
-    const currentBalance = manual > 0 ? manual : (kws.length && orig > 0 ? Math.max(0, orig - paid) : orig);
-    const auto = !manual && kws.length > 0 && orig > 0;
-    const pct  = orig > 0 ? Math.min(100, Math.round(((orig - currentBalance) / orig) * 100)) : 0;
-    const monthsLeft = (pmt > 0 && currentBalance > 0) ? Math.ceil(currentBalance / pmt) : (currentBalance <= 0 ? 0 : null);
-    return { currentBalance, pct, paid, auto, monthsLeft, payoffDate: mkDate(monthsLeft), matchedTxns };
-  };
 
   const totalRelief  = payoffs.filter(p=>enabled.has(p.id)).reduce((s,p)=>s+p.payment,0);
   const projSurplus  = normSurplus + totalRelief;
@@ -2061,7 +2148,7 @@ function Payoffs({wide}) {
           const isOn   = enabled.has(p.id);
           const isEdit = editId === p.id;
           const isAudit = auditOpenId === p.id;
-          const stats  = getPayoffStats(isEdit ? editDraft : p);
+          const stats  = computePayoffStats(isEdit ? editDraft : p, allTxns);
           return (
             <Card key={p.id} style={{opacity:isOn?1:0.6,transition:"opacity .2s",border:`1px solid ${isEdit?p.color+"66":BORDER}`}}>
               {/* Header row */}
@@ -2083,7 +2170,8 @@ function Payoffs({wide}) {
                   }
                 </div>
                  <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0,flexWrap:isCompactMobile?"wrap":"nowrap",width:isCompactMobile?"100%":"auto",paddingLeft:isCompactMobile?46:0}}>
-                  {!isEdit && <Tag color={p.color}>{stats.payoffDate}</Tag>}
+                  {!isEdit && <Tag color={stats.blockedReason ? "#f59e0b" : p.color}>{stats.payoffDate}</Tag>}
+                  {!isEdit && stats.interestRate > 0 && <Tag color="#f59e0b">{stats.interestRate.toFixed(2)}% APR</Tag>}
                   <button onClick={() => {
                     if (isEdit) {
                       setPayoffs(prev => prev.map(q => q.id === p.id ? {...q, ...editDraft} : q));
@@ -2109,10 +2197,14 @@ function Payoffs({wide}) {
                 </div>
               </div>
               {!isEdit && (
-                <div style={{display:"flex",alignItems:"center",gap:6,marginTop:-4,marginBottom:10,paddingLeft:46}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginTop:-4,marginBottom:10,paddingLeft:46,flexWrap:"wrap"}}>
                   <span style={{fontSize:12,color:MUTED}}>Balance: {fmt(stats.currentBalance)}</span>
                   {stats.auto && <span style={{fontSize:10,background:p.color+"22",color:p.color,borderRadius:4,padding:"1px 5px",fontWeight:700}}>auto</span>}
+                  {stats.monthlyInterest > 0 && <span style={{fontSize:12,color:"#f59e0b"}}>~{fmt(stats.monthlyInterest)}/mo interest</span>}
                 </div>
+              )}
+              {!isEdit && stats.estimateWarning && (
+                <div style={{fontSize:10,color:"#f59e0b",marginTop:-6,marginBottom:10,paddingLeft:46}}>{stats.estimateWarning}</div>
               )}
 
               {/* Edit mode fields */}
@@ -2122,6 +2214,8 @@ function Payoffs({wide}) {
                     onChange={v=>setEditDraft(d=>({...d,payment:parseFloat(v)||0}))} type="number" placeholder="460"/>
                   <FieldInput label="Orig. Balance $" val={editDraft.origBalance ?? editDraft.balance ?? ""}
                     onChange={v=>{const n=parseFloat(v)||0; setEditDraft(d=>({...d,origBalance:n,balance:n}));}} type="number" placeholder="12000"/>
+                  <FieldInput label="Interest Rate % APR" val={editDraft.interestRate ?? ""}
+                    onChange={v=>setEditDraft(d=>({...d,interestRate:Math.max(0, parseFloat(v) || 0)}))} type="number" step="0.01" placeholder="6.25"/>
                   <FieldInput label="Current Balance $ (override)" val={editDraft.manualBalance || ""}
                     onChange={v=>setEditDraft(d=>({...d,manualBalance:parseFloat(v)||0}))} type="number" placeholder="Leave blank for auto"/>
                   <div style={{display:"flex",flexDirection:"column",gap:4}}>
@@ -2135,11 +2229,11 @@ function Payoffs({wide}) {
                   <div style={{gridColumn:"1/-1"}}>
                     <FieldInput label="Filter Keywords (comma-separated)" val={editDraft.keywords || ""}
                       onChange={v=>setEditDraft(d=>({...d,keywords:v}))} placeholder="car loan, capital one, auto pay"/>
-                    <div style={{fontSize:10,color:MUTED,marginTop:4}}>Transactions whose description matches any keyword count as payments. Overridden by manual current balance if set.</div>
+                    <div style={{fontSize:10,color:MUTED,marginTop:4}}>Transactions whose description matches any keyword count as payments. Overridden by manual current balance if set. For interest-bearing debts, set the current balance for the most accurate projection.</div>
                   </div>
                   {/* Computed preview — updates live as draft fields change, chart updates on Done */}
                   {(() => {
-                    const s = getPayoffStats(editDraft);
+                    const s = computePayoffStats(editDraft, allTxns);
                     const col = editDraft.color || p.color;
                     return (
                       <div style={{gridColumn:"1/-1",background:BG,borderRadius:8,padding:"10px 12px",border:`1px solid ${BORDER}`}}>
@@ -2164,8 +2258,21 @@ function Payoffs({wide}) {
                             <div style={{fontSize:10,color:MUTED,marginBottom:2}}>Progress</div>
                             <div style={{fontSize:14,fontWeight:700,color:col}}>{s.pct}%</div>
                           </div>
+                          <div>
+                            <div style={{fontSize:10,color:MUTED,marginBottom:2}}>APR</div>
+                            <div style={{fontSize:14,fontWeight:700,color:col}}>{s.interestRate > 0 ? `${s.interestRate.toFixed(2)}%` : "0%"}</div>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:MUTED,marginBottom:2}}>Interest / Mo</div>
+                            <div style={{fontSize:14,fontWeight:700,color:col}}>{s.monthlyInterest > 0 ? fmt(s.monthlyInterest) : "$0.00"}</div>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:MUTED,marginBottom:2}}>Principal / Payment</div>
+                            <div style={{fontSize:14,fontWeight:700,color:col}}>{fmt(s.principalPerPayment)}</div>
+                          </div>
                         </div>
-                        
+                        {s.estimateWarning && <div style={{fontSize:10,color:"#f59e0b",marginTop:8}}>{s.estimateWarning}</div>}
+                        {s.blockedReason && <div style={{fontSize:10,color:"#f59e0b",marginTop:8}}>{s.blockedReason}</div>}
                       </div>
                     );
                   })()}
@@ -2190,7 +2297,9 @@ function Payoffs({wide}) {
               ) : (
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                   <div style={{fontSize:24,fontWeight:900,color:p.color,fontVariantNumeric:"tabular-nums"}}>{fmt(p.payment)}/mo</div>
-                  <div style={{fontSize:12,color:MUTED}}>{stats.monthsLeft !== null ? stats.monthsLeft + " mo left" : "TBD"}</div>
+                  <div style={{fontSize:12,color:stats.blockedReason ? "#f59e0b" : MUTED}}>
+                    {stats.blockedReason || (stats.monthsLeft !== null ? stats.monthsLeft + " mo left" : "TBD")}
+                  </div>
                 </div>
               )}
 
@@ -2239,6 +2348,7 @@ function Payoffs({wide}) {
               <FieldInput label="Name" val={newDebt.name} onChange={v=>setNewDebt(p=>({...p,name:v}))} placeholder="Car loan"/>
               <FieldInput label="Monthly Payment $" val={newDebt.payment} onChange={v=>setNewDebt(p=>({...p,payment:v}))} type="number" placeholder="250"/>
               <FieldInput label="Orig. Balance $" val={newDebt.balance} onChange={v=>setNewDebt(p=>({...p,balance:v}))} placeholder="12000"/>
+              <FieldInput label="Interest Rate % APR" val={newDebt.interestRate} onChange={v=>setNewDebt(p=>({...p,interestRate:v}))} type="number" step="0.01" placeholder="6.25"/>
               <FieldInput label="Current Balance $ (optional override)" val={newDebt.manualBalance} onChange={v=>setNewDebt(p=>({...p,manualBalance:v}))} type="number" placeholder="Leave blank for auto"/>
               <div style={{display:"flex",flexDirection:"column",gap:4}}>
                 <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px"}}>Icon</div>
@@ -2261,7 +2371,7 @@ function Payoffs({wide}) {
               </div>
               <div style={{gridColumn:"1/-1"}}>
                 <FieldInput label="Filter Keywords (comma-separated)" val={newDebt.keywords} onChange={v=>setNewDebt(p=>({...p,keywords:v}))} placeholder="car loan, capital one, auto pay"/>
-                <div style={{fontSize:10,color:MUTED,marginTop:4}}>Transactions matching these keywords auto-compute balance and payoff date. Optional.</div>
+                <div style={{fontSize:10,color:MUTED,marginTop:4}}>Transactions matching these keywords count as payments. For interest-bearing debts, set the current balance for the most accurate projection.</div>
               </div>
             </div>
             <div style={{display:"flex",gap:8}}>
@@ -4639,6 +4749,7 @@ function Recommendations({ wide, isMobile }) {
   const [showPrompt, setShowPrompt] = useState(false);
 
   const totalImpact = payoffs.reduce((s, p) => s + p.payment, 0);
+  const debtAuditTxns = [...checkTxns, ...ccTxns].filter(t => !t.excludeFromTags);
 
   // Actual gap = actual income minus actual spending (not normalized)
   const actualIncome = [...checkTxns, ...ccTxns].filter(t => t.month === selectedMonth && t.cat === "Income").reduce((s,t)=>s+t.amount,0) || takeHome;
@@ -4669,7 +4780,11 @@ function Recommendations({ wide, isMobile }) {
       allTxns.forEach(t => { byCat[t.cat] = (byCat[t.cat]||0) + t.amount; });
       const spendSummary = Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>`${cat}: $${amt.toFixed(2)}`).join(", ");
       const gapStr = normSurplus < 0 ? `monthly gap of $${Math.abs(normSurplus).toFixed(0)}` : `monthly surplus of $${normSurplus.toFixed(0)}`;
-      const debtStr = payoffs.map(p=>`${p.name} ($${p.payment}/mo, payoff ${p.date})`).join("; ");
+      const debtStr = payoffs.map(p => {
+        const stats = computePayoffStats(p, debtAuditTxns);
+        const apr = stats.interestRate > 0 ? `, ${stats.interestRate.toFixed(2)}% APR` : "";
+        return `${p.name} ($${p.payment}/mo${apr}, payoff ${stats.payoffDate})`;
+      }).join("; ");
       const selectedIdx = APP_MONTHS.indexOf(selectedMonth);
       const previousMonths = availableMonths
         .filter(m => APP_MONTHS.indexOf(m) >= 0 && APP_MONTHS.indexOf(m) < selectedIdx)
@@ -8059,7 +8174,12 @@ export default function BudgetDashboardClean() {
   }, [availableMonths, selectedMonth]);
 
   const [payoffs, setPayoffs] = useState(() => {
-    return ls.getJSON("budget_payoffs", PAYOFFS_INIT);
+    const stored = ls.getJSON("budget_payoffs", PAYOFFS_INIT);
+    const list = Array.isArray(stored) ? stored : PAYOFFS_INIT;
+    return list.map(p => ({
+      ...p,
+      interestRate: Math.max(0, Number(p?.interestRate) || 0),
+    }));
   });
   const [waterfallDisabled, setWaterfallDisabled] = useState(() => ls.getJSON("budget_wfDisabled", []));
   useEffect(() => { ls.setJSON("budget_wfDisabled", waterfallDisabled); }, [waterfallDisabled]);
