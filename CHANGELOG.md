@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.22] - 2026-03-25
+
+### Fixed
+- The app footer version now reads directly from `package.json`, removing the separate hardcoded app version constant so future releases cannot drift between two version strings.
+
 ## [0.1.21] - 2026-03-25
 
 ### Changed

@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useMemo, useCallback, createContext, useContext, useRef } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, ReferenceLine, LineChart, Line, AreaChart, Area, CartesianGrid, Legend, LabelList } from "recharts";
+import appPackage from "../package.json";
 
 // ── YOUR ANTHROPIC API KEY ────────────────────────────────────────────────────
 // Get one at https://console.anthropic.com → API Keys
@@ -7483,7 +7484,7 @@ const NAV = [
 ];
 const PAGES_URL = "https://xkillerbees.github.io/family-budget-dashboard/";
 const REPO_URL = "https://github.com/xKillerbees/family-budget-dashboard";
-const APP_VERSION = "0.1.20";
+const APP_VERSION = appPackage.version;
 const APP_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ALIAS = {
   jan: "January", feb: "February", mar: "March", apr: "April", may: "May", jun: "June",
