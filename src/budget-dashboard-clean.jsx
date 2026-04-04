@@ -3825,6 +3825,265 @@ function TxnTable({ src, isMobile }) {
   );
 }
 
+function ExistingTxnDuplicateTool({ src, isMobile }) {
+  const { checkTxns, ccTxns, selectedYear, deleteTxn, catColorsAll } = useBudget();
+  const txns = src === "checking" ? checkTxns : ccTxns;
+  const accountLabel = recurringSourceLabel(src);
+  const scan = useMemo(() => buildExistingTxnDuplicateScan(txns, selectedYear), [txns, selectedYear]);
+  const [hasScanned, setHasScanned] = useState(false);
+  const [actionMsg, setActionMsg] = useState(null);
+
+  useEffect(() => {
+    setHasScanned(false);
+    setActionMsg(null);
+  }, [src, selectedYear]);
+
+  const runScan = () => {
+    setHasScanned(true);
+    setActionMsg(null);
+  };
+  const removeExactGroup = (group) => {
+    const removeIds = group?.remove?.map(item => item.id).filter(Boolean) || [];
+    if (!removeIds.length) return;
+    const keepSummary = summarizeTxnDuplicateRef(group.keep?.txn) || "the first saved transaction";
+    if (!confirmDeleteAction(`Remove ${removeIds.length} exact duplicate transaction${removeIds.length === 1 ? "" : "s"} and keep ${keepSummary}?`)) return;
+    removeIds.forEach(id => deleteTxn(src, id, { force: true }));
+    setActionMsg({
+      type: "success",
+      text: `Removed ${removeIds.length} duplicate transaction${removeIds.length === 1 ? "" : "s"} from ${accountLabel}.`,
+    });
+  };
+  const removeAllExactDuplicates = () => {
+    const removeIds = scan.exactGroups.flatMap(group => group.remove.map(item => item.id)).filter(Boolean);
+    if (!removeIds.length) return;
+    if (!confirmDeleteAction(`Remove ${removeIds.length} exact duplicate transaction${removeIds.length === 1 ? "" : "s"} across ${scan.exactGroups.length} duplicate group${scan.exactGroups.length === 1 ? "" : "s"} in ${accountLabel} ${selectedYear}?`)) return;
+    removeIds.forEach(id => deleteTxn(src, id, { force: true }));
+    setActionMsg({
+      type: "success",
+      text: `Removed ${removeIds.length} exact duplicate transaction${removeIds.length === 1 ? "" : "s"} across ${scan.exactGroups.length} group${scan.exactGroups.length === 1 ? "" : "s"}.`,
+    });
+  };
+
+  const totalFindings = scan.exactGroups.length + scan.possibleGroups.length + scan.splitOverlaps.length;
+
+  return (
+    <Card glow="#f59e0b">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:220}}>
+          <Label style={{marginBottom:4}}>Duplicate Tool</Label>
+          <div style={{fontSize:12,color:MUTED,lineHeight:1.6}}>
+            Scan existing {accountLabel.toLowerCase()} transactions for {selectedYear}. Exact duplicate cleanup only removes extra non-split rows; possible matches and split overlaps stay review-only.
+          </div>
+          {scan.skippedSplitCount > 0 && (
+            <div style={{fontSize:11,color:DIM,marginTop:8}}>
+              {scan.skippedSplitCount} split transaction line{scan.skippedSplitCount === 1 ? "" : "s"} will be skipped to avoid removing legitimate receipt splits.
+            </div>
+          )}
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button
+            onClick={runScan}
+            disabled={!txns.length}
+            style={{
+              padding:"8px 14px",
+              borderRadius:9,
+              border:"none",
+              background:txns.length ? "#f59e0b22" : "#1e2535",
+              color:txns.length ? "#fbbf24" : MUTED,
+              fontSize:12,
+              fontWeight:800,
+              cursor:txns.length ? "pointer" : "default",
+            }}
+          >
+            {hasScanned ? "Rescan Duplicates" : "Scan for Duplicates"}
+          </button>
+          {hasScanned && scan.removableCount > 0 && (
+            <button
+              onClick={removeAllExactDuplicates}
+              style={{
+                padding:"8px 14px",
+                borderRadius:9,
+                border:"none",
+                background:"#ef444422",
+                color:"#f87171",
+                fontSize:12,
+                fontWeight:800,
+                cursor:"pointer",
+              }}
+            >
+              Remove All Exact Extras
+            </button>
+          )}
+        </div>
+      </div>
+
+      {hasScanned && (
+        <>
+          <div style={{display:"grid",gridTemplateColumns:isMobile ? "1fr 1fr" : "repeat(4, minmax(0,1fr))",gap:8,marginTop:14}}>
+            {[
+              ["Exact groups", scan.exactGroups.length, "#f59e0b"],
+              ["Rows removable", scan.removableCount, "#ef4444"],
+              ["Possible groups", scan.possibleGroups.length, "#facc15"],
+              ["Split overlaps", scan.splitOverlaps.length, "#fb923c"],
+            ].map(([label, value, color]) => (
+              <div key={label} style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:10,padding:"10px 12px"}}>
+                <div style={{fontSize:10,color:MUTED,marginBottom:4,textTransform:"uppercase",letterSpacing:".4px"}}>{label}</div>
+                <div style={{fontSize:17,fontWeight:900,color,fontVariantNumeric:"tabular-nums"}}>{value}</div>
+              </div>
+            ))}
+          </div>
+
+          {actionMsg && (
+            <div style={{
+              marginTop:12,
+              padding:"9px 12px",
+              borderRadius:10,
+              background:actionMsg.type === "success" ? "#22c55e15" : "#33415522",
+              border:`1px solid ${actionMsg.type === "success" ? "#22c55e33" : BORDER}`,
+              color:actionMsg.type === "success" ? "#22c55e" : MUTED,
+              fontSize:12,
+              fontWeight:700,
+            }}>
+              {actionMsg.text}
+            </div>
+          )}
+
+          {totalFindings === 0 ? (
+            <div style={{marginTop:12,fontSize:12,color:"#22c55e",background:"#22c55e11",border:"1px solid #22c55e22",borderRadius:10,padding:"10px 12px"}}>
+              No duplicate groups were found in {accountLabel.toLowerCase()} for {selectedYear}.
+            </div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:12,marginTop:12}}>
+              {scan.exactGroups.length > 0 && (
+                <div>
+                  <div style={{fontSize:12,fontWeight:800,color:"#fbbf24",marginBottom:8,textTransform:"uppercase",letterSpacing:".4px"}}>
+                    Exact Duplicates
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {scan.exactGroups.map(group => (
+                      <details key={group.key} style={{background:BG,border:`1px solid #f59e0b33`,borderRadius:12,padding:"10px 12px"}}>
+                        <summary style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,cursor:"pointer",listStyle:"none"}}>
+                          <div style={{minWidth:0}}>
+                            <div style={{fontSize:13,fontWeight:700,color:TEXT}}>{summarizeTxnDuplicateRef(group.keep?.txn)}</div>
+                            <div style={{fontSize:11,color:MUTED,marginTop:3}}>
+                              {group.count} saved copies. Keep 1 and remove {group.remove.length}.
+                            </div>
+                          </div>
+                          <button
+                            onClick={e => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              removeExactGroup(group);
+                            }}
+                            style={{padding:"6px 10px",borderRadius:8,border:"none",background:"#ef444422",color:"#f87171",fontSize:11,fontWeight:800,cursor:"pointer",flexShrink:0}}
+                          >
+                            Remove Extras
+                          </button>
+                        </summary>
+                        <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:12}}>
+                          {group.items.map(item => {
+                            const catColor = catColorsAll[item.txn?.cat] || "#94a3b8";
+                            const note = getTxnDisplayNote(item.txn?.note);
+                            const subcat = normalizeTxnSubcategory(item.txn?.subcat);
+                            const isKeep = item.id === group.keep?.id;
+                            return (
+                              <div key={item.id} style={{background:isKeep ? "#22c55e10" : SURFACE,border:`1px solid ${isKeep ? "#22c55e33" : BORDER}`,borderRadius:10,padding:"9px 10px"}}>
+                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                                  <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(item.txn)}</div>
+                                  <Tag color={isKeep ? "#22c55e" : "#ef4444"}>{isKeep ? "keep" : "remove"}</Tag>
+                                </div>
+                                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+                                  {item.txn?.cat && <Tag color={catColor}>{item.txn.cat}</Tag>}
+                                  {subcat && <Tag color={catColor}>{subcat}</Tag>}
+                                  {item.txn?.excludeFromTags && <Tag color="#f59e0b">excluded</Tag>}
+                                </div>
+                                {note && <div style={{fontSize:11,color:DIM,marginTop:5}}>{note}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {scan.possibleGroups.length > 0 && (
+                <div>
+                  <div style={{fontSize:12,fontWeight:800,color:"#facc15",marginBottom:8,textTransform:"uppercase",letterSpacing:".4px"}}>
+                    Possible Duplicates
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {scan.possibleGroups.map(group => (
+                      <details key={group.slotKey} style={{background:BG,border:`1px solid #facc1533`,borderRadius:12,padding:"10px 12px"}}>
+                        <summary style={{cursor:"pointer",listStyle:"none"}}>
+                          <div style={{fontSize:13,fontWeight:700,color:TEXT}}>{summarizeTxnDuplicateRef(group.items[0]?.txn)}</div>
+                          <div style={{fontSize:11,color:MUTED,marginTop:3}}>
+                            {group.count} transactions share the same date and amount with similar merchant text. Review manually before deleting anything.
+                          </div>
+                        </summary>
+                        <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:12}}>
+                          {group.items.map(item => {
+                            const catColor = catColorsAll[item.txn?.cat] || "#94a3b8";
+                            const note = getTxnDisplayNote(item.txn?.note);
+                            const subcat = normalizeTxnSubcategory(item.txn?.subcat);
+                            return (
+                              <div key={item.id} style={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,padding:"9px 10px"}}>
+                                <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(item.txn)}</div>
+                                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+                                  {item.txn?.cat && <Tag color={catColor}>{item.txn.cat}</Tag>}
+                                  {subcat && <Tag color={catColor}>{subcat}</Tag>}
+                                </div>
+                                {note && <div style={{fontSize:11,color:DIM,marginTop:5}}>{note}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {scan.splitOverlaps.length > 0 && (
+                <div>
+                  <div style={{fontSize:12,fontWeight:800,color:"#fb923c",marginBottom:8,textTransform:"uppercase",letterSpacing:".4px"}}>
+                    Split Overlaps
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {scan.splitOverlaps.map(entry => (
+                      <details key={entry.key} style={{background:BG,border:`1px solid #fb923c33`,borderRadius:12,padding:"10px 12px"}}>
+                        <summary style={{cursor:"pointer",listStyle:"none"}}>
+                          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                            <span style={{fontSize:13,fontWeight:700,color:TEXT}}>{summarizeTxnDuplicateRef(entry.item?.txn)}</span>
+                            <Tag color={entry.exactMatches.length ? "#fb923c" : "#facc15"}>
+                              {entry.exactMatches.length ? "matches split group" : "possible split match"}
+                            </Tag>
+                          </div>
+                          <div style={{fontSize:11,color:MUTED,marginTop:3}}>
+                            Same date and amount as an existing split purchase. Review before deleting.
+                          </div>
+                        </summary>
+                        <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:12}}>
+                          {[...(entry.exactMatches || []), ...(entry.possibleMatches || [])].map((match, idx) => (
+                            <div key={`${entry.key}-${idx}`} style={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,padding:"9px 10px",fontSize:12,color:TEXT}}>
+                              {summarizeSplitGroupDuplicateRef(match)}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 // ── RECOMMENDATIONS ───────────────────────────────────────────────────────────
 
 function TransactionsPage({ wide, isMobile }) {
@@ -3865,6 +4124,7 @@ function TransactionsPage({ wide, isMobile }) {
         </div>
       </Card>
       {showImport && <StatementImporter wide={wide} isMobile={isMobile}/>}
+      <ExistingTxnDuplicateTool src={source} isMobile={isMobile}/>
       <TxnTable src={source} isMobile={isMobile}/>
     </div>
   );
@@ -7902,6 +8162,150 @@ function buildDuplicateReferenceLine(label, matches, formatter) {
   if (!summary) return "";
   const more = matches.length > 1 ? ` (+${matches.length - 1} more)` : "";
   return `${label}: ${summary}${more}`;
+}
+function prepareStoredTxnDuplicateCandidate(txn, fallbackYear = null, originalIndex = null) {
+  const amount = Number(txn?.amount);
+  return {
+    txn,
+    id: String(txn?.id || "").trim(),
+    year: deriveTxnYear(txn, fallbackYear),
+    date: fingerprintTxnDate(txn?.date),
+    amount,
+    amountCents: Number.isFinite(amount) ? Math.round(amount * 100) : null,
+    exactKey: buildTxnFingerprint(txn, fallbackYear),
+    merchant: buildMerchantSignature(txn?.desc),
+    isSplitChild: !!String(txn?.splitGroupId || "").trim(),
+    originalIndex: Number.isInteger(originalIndex) ? originalIndex : -1,
+  };
+}
+function scoreTxnDuplicateKeepCandidate(candidate) {
+  let score = 0;
+  const note = String(candidate?.txn?.note || "").trim();
+  const subcat = normalizeTxnSubcategory(candidate?.txn?.subcat);
+  const cat = String(candidate?.txn?.cat || "").trim();
+  const desc = String(candidate?.txn?.desc || "").trim();
+  if (note && !/\[split\]/i.test(note)) score += 4;
+  if (subcat) score += 3;
+  if (cat && cat !== "Snacks/Misc") score += 1;
+  if (desc.length > 12) score += 1;
+  return score;
+}
+function sortTxnDuplicateCandidates(candidates = []) {
+  return [...candidates].sort((a, b) =>
+    scoreTxnDuplicateKeepCandidate(b) - scoreTxnDuplicateKeepCandidate(a)
+    || a.originalIndex - b.originalIndex
+    || String(a.id || "").localeCompare(String(b.id || ""))
+  );
+}
+function buildPossibleTxnDuplicateGroups(candidates = []) {
+  const bySlot = new Map();
+  candidates.forEach(item => {
+    if (!Number.isFinite(item?.year) || !item?.date || !Number.isFinite(item?.amountCents)) return;
+    const slotKey = `${item.year}|${item.date}|${item.amountCents}`;
+    const group = bySlot.get(slotKey) || [];
+    group.push(item);
+    bySlot.set(slotKey, group);
+  });
+  const groups = [];
+  bySlot.forEach(slotItems => {
+    if (slotItems.length < 2) return;
+    const visited = new Set();
+    slotItems.forEach(item => {
+      if (!item?.id || visited.has(item.id)) return;
+      visited.add(item.id);
+      const stack = [item];
+      const component = [];
+      while (stack.length) {
+        const current = stack.pop();
+        component.push(current);
+        slotItems.forEach(other => {
+          if (!other?.id || visited.has(other.id) || other.id === current.id) return;
+          if (merchantSimilarity(current.merchant, other.merchant) < 0.7) return;
+          visited.add(other.id);
+          stack.push(other);
+        });
+      }
+      if (component.length > 1) {
+        const ordered = sortTxnDuplicateCandidates(component);
+        groups.push({
+          slotKey: `${ordered[0]?.year || ""}|${ordered[0]?.date || ""}|${ordered[0]?.amountCents || ""}|${ordered[0]?.id || ""}`,
+          items: ordered,
+          count: ordered.length,
+        });
+      }
+    });
+  });
+  return groups.sort((a, b) => b.count - a.count || a.items[0].originalIndex - b.items[0].originalIndex);
+}
+function buildExistingTxnDuplicateScan(txns = [], fallbackYear = null) {
+  const candidates = txns
+    .map((txn, idx) => prepareStoredTxnDuplicateCandidate(txn, fallbackYear, idx))
+    .filter(item =>
+      item.id
+      && item.date
+      && Number.isFinite(item.amountCents)
+      && Number.isFinite(item.year)
+      && (!Number.isFinite(fallbackYear) || item.year === fallbackYear)
+    );
+  const nonSplitCandidates = candidates.filter(item => !item.isSplitChild);
+  const exactByKey = new Map();
+  nonSplitCandidates.forEach(item => {
+    if (!item.exactKey) return;
+    const group = exactByKey.get(item.exactKey) || [];
+    group.push(item);
+    exactByKey.set(item.exactKey, group);
+  });
+  const exactGroups = [...exactByKey.values()]
+    .filter(group => group.length > 1)
+    .map(group => {
+      const items = sortTxnDuplicateCandidates(group);
+      return {
+        key: items[0]?.exactKey || items[0]?.id || "",
+        items,
+        keep: items[0],
+        remove: items.slice(1),
+        count: items.length,
+      };
+    })
+    .sort((a, b) => b.count - a.count || a.keep.originalIndex - b.keep.originalIndex);
+  const exactIds = new Set(exactGroups.flatMap(group => group.items.map(item => item.id)));
+  const possibleGroups = buildPossibleTxnDuplicateGroups(nonSplitCandidates.filter(item => !exactIds.has(item.id)));
+  const splitGroups = collectSplitDuplicateGroups(txns, fallbackYear)
+    .filter(group =>
+      group?.date
+      && Number.isFinite(group?.totalCents)
+      && Number.isFinite(group?.year)
+      && (!Number.isFinite(fallbackYear) || group.year === fallbackYear)
+    );
+  const splitOverlaps = nonSplitCandidates
+    .filter(item => !exactIds.has(item.id))
+    .flatMap(item => {
+      const sameSlot = splitGroups.filter(group =>
+        group.year === item.year && group.date === item.date && group.totalCents === item.amountCents
+      );
+      if (!sameSlot.length) return [];
+      const exactMatches = item.exactKey ? sameSlot.filter(group => group.exactKey === item.exactKey) : [];
+      const possibleMatches = !exactMatches.length
+        ? sameSlot.filter(group => merchantSimilarity(item.merchant, group.merchant) >= 0.7)
+        : [];
+      if (!exactMatches.length && !possibleMatches.length) return [];
+      return [{
+        key: `${item.id}|split`,
+        item,
+        exactMatches,
+        possibleMatches,
+      }];
+    })
+    .sort((a, b) => a.item.originalIndex - b.item.originalIndex);
+  return {
+    scannedCount: candidates.length,
+    nonSplitCount: nonSplitCandidates.length,
+    skippedSplitCount: candidates.length - nonSplitCandidates.length,
+    exactGroups,
+    possibleGroups,
+    splitOverlaps,
+    removableCount: exactGroups.reduce((sum, group) => sum + group.remove.length, 0),
+  };
 }
 function monthYearValue(year, month) {
   const safeYear = Number(year);

@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.25] - 2026-04-03
+
+### Added
+- Transactions now include an on-demand Duplicate Tool that scans existing checking or credit-card transactions for the selected year and surfaces exact duplicates, likely duplicates, and split-group overlaps.
+
+### Changed
+- Exact duplicate cleanup now keeps the strongest saved transaction and only removes extra non-split copies after confirmation, making post-import cleanup safer when a statement was imported twice.
+
 ## [0.1.24] - 2026-03-25
 
 ### Fixed
