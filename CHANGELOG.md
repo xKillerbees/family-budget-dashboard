@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.27] - 2026-04-03
+
+### Added
+- The Transactions duplicate tool now lets you manually delete a specific row from any duplicate result card, including same-account matches, cross-account matches, and the current row shown beside split-overlap warnings.
+
+### Changed
+- Same-account exact duplicate groups now show a suggested keep/remove split while still letting you override that suggestion and pick the exact transaction to delete.
+
 ## [0.1.26] - 2026-04-03
 
 ### Added

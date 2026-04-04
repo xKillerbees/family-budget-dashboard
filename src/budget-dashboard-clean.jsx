@@ -3830,8 +3830,9 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
   const txns = src === "checking" ? checkTxns : ccTxns;
   const accountLabel = recurringSourceLabel(src);
   const otherTxns = src === "checking" ? ccTxns : checkTxns;
+  const otherSrc = src === "checking" ? "cc" : "checking";
   const otherAccountLabel = recurringSourceLabel(src === "checking" ? "cc" : "checking");
-  const scan = useMemo(() => buildExistingTxnDuplicateScan(txns, selectedYear, otherTxns), [txns, selectedYear, otherTxns]);
+  const scan = useMemo(() => buildExistingTxnDuplicateScan(txns, selectedYear, otherTxns, src, otherSrc), [txns, selectedYear, otherTxns, src, otherSrc]);
   const [hasScanned, setHasScanned] = useState(false);
   const [actionMsg, setActionMsg] = useState(null);
 
@@ -3865,6 +3866,49 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
       text: `Removed ${removeIds.length} exact duplicate transaction${removeIds.length === 1 ? "" : "s"} across ${scan.exactGroups.length} group${scan.exactGroups.length === 1 ? "" : "s"}.`,
     });
   };
+  const deleteCandidate = (candidate) => {
+    const candidateId = String(candidate?.id || "").trim();
+    const candidateSrc = candidate?.src === "cc" ? "cc" : "checking";
+    if (!candidateId) return;
+    const summary = summarizeTxnDuplicateRef(candidate?.txn) || "this transaction";
+    const candidateAccountLabel = recurringSourceLabel(candidateSrc);
+    if (!confirmDeleteAction(`Delete ${summary} from ${candidateAccountLabel}?`)) return;
+    deleteTxn(candidateSrc, candidateId, { force: true });
+    setActionMsg({
+      type: "success",
+      text: `Deleted ${summary} from ${candidateAccountLabel}.`,
+    });
+  };
+  const renderTxnChoiceCard = (candidate, { background = SURFACE, borderColor = BORDER, badge = null } = {}) => {
+    if (!candidate?.id) return null;
+    const catColor = catColorsAll[candidate.txn?.cat] || "#94a3b8";
+    const note = getTxnDisplayNote(candidate.txn?.note);
+    const subcat = normalizeTxnSubcategory(candidate.txn?.subcat);
+    const candidateAccountLabel = recurringSourceLabel(candidate.src);
+    return (
+      <div key={candidate.id} style={{background,border:`1px solid ${borderColor}`,borderRadius:10,padding:"9px 10px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+          <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(candidate.txn)}</div>
+          <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"flex-end",flexWrap:"wrap",flexShrink:0}}>
+            {badge && <Tag color={badge.color}>{badge.text}</Tag>}
+            <Tag color={candidate.src === src ? "#38bdf8" : "#a78bfa"}>{candidateAccountLabel}</Tag>
+            <button
+              onClick={() => deleteCandidate(candidate)}
+              style={{padding:"4px 8px",borderRadius:7,border:"none",background:"#ef444422",color:"#f87171",fontSize:11,fontWeight:800,cursor:"pointer"}}
+            >
+              Delete This
+            </button>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+          {candidate.txn?.cat && <Tag color={catColor}>{candidate.txn.cat}</Tag>}
+          {subcat && <Tag color={catColor}>{subcat}</Tag>}
+          {candidate.txn?.excludeFromTags && <Tag color="#f59e0b">excluded</Tag>}
+        </div>
+        {note && <div style={{fontSize:11,color:DIM,marginTop:5}}>{note}</div>}
+      </div>
+    );
+  };
 
   const possibleCount = scan.possibleGroups.length + scan.crossAccountPossible.length;
   const totalFindings = scan.exactGroups.length + scan.possibleGroups.length + scan.crossAccountExact.length + scan.crossAccountPossible.length + scan.splitOverlaps.length;
@@ -3875,7 +3919,7 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
         <div style={{flex:1,minWidth:220}}>
           <Label style={{marginBottom:4}}>Duplicate Tool</Label>
           <div style={{fontSize:12,color:MUTED,lineHeight:1.6}}>
-            Scan existing {accountLabel.toLowerCase()} transactions for {selectedYear}. Exact duplicate cleanup only removes extra non-split rows in this account; cross-account matches against {otherAccountLabel.toLowerCase()} stay review-only.
+            Scan existing {accountLabel.toLowerCase()} transactions for {selectedYear}. Exact duplicate cleanup only removes extra non-split rows in this account automatically; cross-account matches against {otherAccountLabel.toLowerCase()} stay manual so you can pick the exact row to delete.
           </div>
           {scan.skippedSplitCount > 0 && (
             <div style={{fontSize:11,color:DIM,marginTop:8}}>
@@ -3973,7 +4017,7 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
                           <div style={{minWidth:0}}>
                             <div style={{fontSize:13,fontWeight:700,color:TEXT}}>{summarizeTxnDuplicateRef(group.keep?.txn)}</div>
                             <div style={{fontSize:11,color:MUTED,marginTop:3}}>
-                              {group.count} saved copies. Keep 1 and remove {group.remove.length}.
+                              {group.count} saved copies. Use `Delete This` below to choose manually, or accept the suggested keep/remove split.
                             </div>
                           </div>
                           <button
@@ -3989,24 +4033,12 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
                         </summary>
                         <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:12}}>
                           {group.items.map(item => {
-                            const catColor = catColorsAll[item.txn?.cat] || "#94a3b8";
-                            const note = getTxnDisplayNote(item.txn?.note);
-                            const subcat = normalizeTxnSubcategory(item.txn?.subcat);
                             const isKeep = item.id === group.keep?.id;
-                            return (
-                              <div key={item.id} style={{background:isKeep ? "#22c55e10" : SURFACE,border:`1px solid ${isKeep ? "#22c55e33" : BORDER}`,borderRadius:10,padding:"9px 10px"}}>
-                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                                  <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(item.txn)}</div>
-                                  <Tag color={isKeep ? "#22c55e" : "#ef4444"}>{isKeep ? "keep" : "remove"}</Tag>
-                                </div>
-                                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
-                                  {item.txn?.cat && <Tag color={catColor}>{item.txn.cat}</Tag>}
-                                  {subcat && <Tag color={catColor}>{subcat}</Tag>}
-                                  {item.txn?.excludeFromTags && <Tag color="#f59e0b">excluded</Tag>}
-                                </div>
-                                {note && <div style={{fontSize:11,color:DIM,marginTop:5}}>{note}</div>}
-                              </div>
-                            );
+                            return renderTxnChoiceCard(item, {
+                              background: isKeep ? "#22c55e10" : SURFACE,
+                              borderColor: isKeep ? "#22c55e33" : BORDER,
+                              badge: { color: isKeep ? "#22c55e" : "#ef4444", text: isKeep ? "suggest keep" : "suggest remove" },
+                            });
                           })}
                         </div>
                       </details>
@@ -4022,9 +4054,6 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     {scan.crossAccountExact.map(entry => {
-                      const currentColor = catColorsAll[entry.item?.txn?.cat] || "#94a3b8";
-                      const currentNote = getTxnDisplayNote(entry.item?.txn?.note);
-                      const currentSubcat = normalizeTxnSubcategory(entry.item?.txn?.subcat);
                       return (
                         <details key={entry.key} style={{background:BG,border:`1px solid #fb923c33`,borderRadius:12,padding:"10px 12px"}}>
                           <summary style={{cursor:"pointer",listStyle:"none"}}>
@@ -4037,35 +4066,16 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
                             </div>
                           </summary>
                           <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:12}}>
-                            <div style={{background:"#0f172a",border:`1px solid ${BORDER}`,borderRadius:10,padding:"9px 10px"}}>
-                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                                <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(entry.item?.txn)}</div>
-                                <Tag color="#38bdf8">{accountLabel}</Tag>
-                              </div>
-                              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
-                                {entry.item?.txn?.cat && <Tag color={currentColor}>{entry.item.txn.cat}</Tag>}
-                                {currentSubcat && <Tag color={currentColor}>{currentSubcat}</Tag>}
-                              </div>
-                              {currentNote && <div style={{fontSize:11,color:DIM,marginTop:5}}>{currentNote}</div>}
-                            </div>
-                            {entry.exactMatches.map(match => {
-                              const matchColor = catColorsAll[match.txn?.cat] || "#94a3b8";
-                              const matchNote = getTxnDisplayNote(match.txn?.note);
-                              const matchSubcat = normalizeTxnSubcategory(match.txn?.subcat);
-                              return (
-                                <div key={match.id} style={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,padding:"9px 10px"}}>
-                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                                    <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(match.txn)}</div>
-                                    <Tag color="#a78bfa">{otherAccountLabel}</Tag>
-                                  </div>
-                                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
-                                    {match.txn?.cat && <Tag color={matchColor}>{match.txn.cat}</Tag>}
-                                    {matchSubcat && <Tag color={matchColor}>{matchSubcat}</Tag>}
-                                  </div>
-                                  {matchNote && <div style={{fontSize:11,color:DIM,marginTop:5}}>{matchNote}</div>}
-                                </div>
-                              );
+                            {renderTxnChoiceCard(entry.item, {
+                              background: "#0f172a",
+                              borderColor: BORDER,
+                              badge: { color: "#fb923c", text: "current row" },
                             })}
+                            {entry.exactMatches.map(match => renderTxnChoiceCard(match, {
+                              background: SURFACE,
+                              borderColor: BORDER,
+                              badge: { color: "#22c55e", text: "matched row" },
+                            }))}
                           </div>
                         </details>
                       );
@@ -4089,21 +4099,7 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
                           </div>
                         </summary>
                         <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:12}}>
-                          {group.items.map(item => {
-                            const catColor = catColorsAll[item.txn?.cat] || "#94a3b8";
-                            const note = getTxnDisplayNote(item.txn?.note);
-                            const subcat = normalizeTxnSubcategory(item.txn?.subcat);
-                            return (
-                              <div key={item.id} style={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,padding:"9px 10px"}}>
-                                <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(item.txn)}</div>
-                                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
-                                  {item.txn?.cat && <Tag color={catColor}>{item.txn.cat}</Tag>}
-                                  {subcat && <Tag color={catColor}>{subcat}</Tag>}
-                                </div>
-                                {note && <div style={{fontSize:11,color:DIM,marginTop:5}}>{note}</div>}
-                              </div>
-                            );
-                          })}
+                          {group.items.map(item => renderTxnChoiceCard(item))}
                         </div>
                       </details>
                     ))}
@@ -4118,9 +4114,6 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     {scan.crossAccountPossible.map(entry => {
-                      const currentColor = catColorsAll[entry.item?.txn?.cat] || "#94a3b8";
-                      const currentNote = getTxnDisplayNote(entry.item?.txn?.note);
-                      const currentSubcat = normalizeTxnSubcategory(entry.item?.txn?.subcat);
                       return (
                         <details key={entry.key} style={{background:BG,border:`1px solid #facc1533`,borderRadius:12,padding:"10px 12px"}}>
                           <summary style={{cursor:"pointer",listStyle:"none"}}>
@@ -4133,35 +4126,16 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
                             </div>
                           </summary>
                           <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:12}}>
-                            <div style={{background:"#0f172a",border:`1px solid ${BORDER}`,borderRadius:10,padding:"9px 10px"}}>
-                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                                <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(entry.item?.txn)}</div>
-                                <Tag color="#38bdf8">{accountLabel}</Tag>
-                              </div>
-                              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
-                                {entry.item?.txn?.cat && <Tag color={currentColor}>{entry.item.txn.cat}</Tag>}
-                                {currentSubcat && <Tag color={currentColor}>{currentSubcat}</Tag>}
-                              </div>
-                              {currentNote && <div style={{fontSize:11,color:DIM,marginTop:5}}>{currentNote}</div>}
-                            </div>
-                            {entry.possibleMatches.map(match => {
-                              const matchColor = catColorsAll[match.txn?.cat] || "#94a3b8";
-                              const matchNote = getTxnDisplayNote(match.txn?.note);
-                              const matchSubcat = normalizeTxnSubcategory(match.txn?.subcat);
-                              return (
-                                <div key={match.id} style={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,padding:"9px 10px"}}>
-                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                                    <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(match.txn)}</div>
-                                    <Tag color="#a78bfa">{otherAccountLabel}</Tag>
-                                  </div>
-                                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
-                                    {match.txn?.cat && <Tag color={matchColor}>{match.txn.cat}</Tag>}
-                                    {matchSubcat && <Tag color={matchColor}>{matchSubcat}</Tag>}
-                                  </div>
-                                  {matchNote && <div style={{fontSize:11,color:DIM,marginTop:5}}>{matchNote}</div>}
-                                </div>
-                              );
+                            {renderTxnChoiceCard(entry.item, {
+                              background: "#0f172a",
+                              borderColor: BORDER,
+                              badge: { color: "#facc15", text: "current row" },
                             })}
+                            {entry.possibleMatches.map(match => renderTxnChoiceCard(match, {
+                              background: SURFACE,
+                              borderColor: BORDER,
+                              badge: { color: "#facc15", text: "possible match" },
+                            }))}
                           </div>
                         </details>
                       );
@@ -4190,6 +4164,11 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
                           </div>
                         </summary>
                         <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:12}}>
+                          {renderTxnChoiceCard(entry.item, {
+                            background: "#0f172a",
+                            borderColor: BORDER,
+                            badge: { color: entry.exactMatches.length ? "#fb923c" : "#facc15", text: "current row" },
+                          })}
                           {[...(entry.exactMatches || []), ...(entry.possibleMatches || [])].map((match, idx) => (
                             <div key={`${entry.key}-${idx}`} style={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,padding:"9px 10px",fontSize:12,color:TEXT}}>
                               {summarizeSplitGroupDuplicateRef(match)}
@@ -8288,10 +8267,11 @@ function buildDuplicateReferenceLine(label, matches, formatter) {
   const more = matches.length > 1 ? ` (+${matches.length - 1} more)` : "";
   return `${label}: ${summary}${more}`;
 }
-function prepareStoredTxnDuplicateCandidate(txn, fallbackYear = null, originalIndex = null) {
+function prepareStoredTxnDuplicateCandidate(txn, fallbackYear = null, originalIndex = null, src = "checking") {
   const amount = Number(txn?.amount);
   return {
     txn,
+    src,
     id: String(txn?.id || "").trim(),
     year: deriveTxnYear(txn, fallbackYear),
     date: fingerprintTxnDate(txn?.date),
@@ -8390,9 +8370,9 @@ function buildCrossAccountTxnDuplicateGroups(currentCandidates = [], otherCandid
     })
     .sort((a, b) => a.item.originalIndex - b.item.originalIndex);
 }
-function buildExistingTxnDuplicateScan(txns = [], fallbackYear = null, comparisonTxns = []) {
+function buildExistingTxnDuplicateScan(txns = [], fallbackYear = null, comparisonTxns = [], src = "checking", comparisonSrc = "cc") {
   const candidates = txns
-    .map((txn, idx) => prepareStoredTxnDuplicateCandidate(txn, fallbackYear, idx))
+    .map((txn, idx) => prepareStoredTxnDuplicateCandidate(txn, fallbackYear, idx, src))
     .filter(item =>
       item.id
       && item.date
@@ -8425,7 +8405,7 @@ function buildExistingTxnDuplicateScan(txns = [], fallbackYear = null, compariso
   const possibleGroups = buildPossibleTxnDuplicateGroups(nonSplitCandidates.filter(item => !exactIds.has(item.id)));
   const crossAccountEligible = nonSplitCandidates.filter(item => item.txn?.cat !== "Transfer" && item.txn?.cat !== "Income");
   const comparisonCandidates = comparisonTxns
-    .map((txn, idx) => prepareStoredTxnDuplicateCandidate(txn, fallbackYear, idx))
+    .map((txn, idx) => prepareStoredTxnDuplicateCandidate(txn, fallbackYear, idx, comparisonSrc))
     .filter(item =>
       item.id
       && item.date
