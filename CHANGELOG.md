@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.26] - 2026-04-03
+
+### Added
+- The Transactions duplicate tool now checks the other account too, so duplicate purchases imported into checking and credit card on the same date and amount can be surfaced together during review.
+
+### Changed
+- Duplicate scan results are now split into same-account, cross-account, possible-match, and split-overlap sections so missed double-imports like matching merchant purchases across ledgers are easier to spot without confusing them with transfer rows.
+
 ## [0.1.25] - 2026-04-03
 
 ### Added

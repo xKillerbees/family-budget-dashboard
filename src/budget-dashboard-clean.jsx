@@ -3829,7 +3829,9 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
   const { checkTxns, ccTxns, selectedYear, deleteTxn, catColorsAll } = useBudget();
   const txns = src === "checking" ? checkTxns : ccTxns;
   const accountLabel = recurringSourceLabel(src);
-  const scan = useMemo(() => buildExistingTxnDuplicateScan(txns, selectedYear), [txns, selectedYear]);
+  const otherTxns = src === "checking" ? ccTxns : checkTxns;
+  const otherAccountLabel = recurringSourceLabel(src === "checking" ? "cc" : "checking");
+  const scan = useMemo(() => buildExistingTxnDuplicateScan(txns, selectedYear, otherTxns), [txns, selectedYear, otherTxns]);
   const [hasScanned, setHasScanned] = useState(false);
   const [actionMsg, setActionMsg] = useState(null);
 
@@ -3864,7 +3866,8 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
     });
   };
 
-  const totalFindings = scan.exactGroups.length + scan.possibleGroups.length + scan.splitOverlaps.length;
+  const possibleCount = scan.possibleGroups.length + scan.crossAccountPossible.length;
+  const totalFindings = scan.exactGroups.length + scan.possibleGroups.length + scan.crossAccountExact.length + scan.crossAccountPossible.length + scan.splitOverlaps.length;
 
   return (
     <Card glow="#f59e0b">
@@ -3872,13 +3875,16 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
         <div style={{flex:1,minWidth:220}}>
           <Label style={{marginBottom:4}}>Duplicate Tool</Label>
           <div style={{fontSize:12,color:MUTED,lineHeight:1.6}}>
-            Scan existing {accountLabel.toLowerCase()} transactions for {selectedYear}. Exact duplicate cleanup only removes extra non-split rows; possible matches and split overlaps stay review-only.
+            Scan existing {accountLabel.toLowerCase()} transactions for {selectedYear}. Exact duplicate cleanup only removes extra non-split rows in this account; cross-account matches against {otherAccountLabel.toLowerCase()} stay review-only.
           </div>
           {scan.skippedSplitCount > 0 && (
             <div style={{fontSize:11,color:DIM,marginTop:8}}>
               {scan.skippedSplitCount} split transaction line{scan.skippedSplitCount === 1 ? "" : "s"} will be skipped to avoid removing legitimate receipt splits.
             </div>
           )}
+          <div style={{fontSize:11,color:DIM,marginTop:6}}>
+            Cross-account checks focus on non-transfer spending rows so credit-card payments do not drown out real duplicate purchases.
+          </div>
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button
@@ -3919,11 +3925,12 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
 
       {hasScanned && (
         <>
-          <div style={{display:"grid",gridTemplateColumns:isMobile ? "1fr 1fr" : "repeat(4, minmax(0,1fr))",gap:8,marginTop:14}}>
+          <div style={{display:"grid",gridTemplateColumns:isMobile ? "1fr 1fr" : "repeat(5, minmax(0,1fr))",gap:8,marginTop:14}}>
             {[
-              ["Exact groups", scan.exactGroups.length, "#f59e0b"],
+              ["Same-account exact", scan.exactGroups.length, "#f59e0b"],
+              ["Cross-account exact", scan.crossAccountExact.length, "#fb923c"],
               ["Rows removable", scan.removableCount, "#ef4444"],
-              ["Possible groups", scan.possibleGroups.length, "#facc15"],
+              ["Possible matches", possibleCount, "#facc15"],
               ["Split overlaps", scan.splitOverlaps.length, "#fb923c"],
             ].map(([label, value, color]) => (
               <div key={label} style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:10,padding:"10px 12px"}}>
@@ -3957,7 +3964,7 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
               {scan.exactGroups.length > 0 && (
                 <div>
                   <div style={{fontSize:12,fontWeight:800,color:"#fbbf24",marginBottom:8,textTransform:"uppercase",letterSpacing:".4px"}}>
-                    Exact Duplicates
+                    Same-Account Exact Duplicates
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     {scan.exactGroups.map(group => (
@@ -4008,10 +4015,69 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
                 </div>
               )}
 
+              {scan.crossAccountExact.length > 0 && (
+                <div>
+                  <div style={{fontSize:12,fontWeight:800,color:"#fb923c",marginBottom:8,textTransform:"uppercase",letterSpacing:".4px"}}>
+                    Cross-Account Exact Matches
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {scan.crossAccountExact.map(entry => {
+                      const currentColor = catColorsAll[entry.item?.txn?.cat] || "#94a3b8";
+                      const currentNote = getTxnDisplayNote(entry.item?.txn?.note);
+                      const currentSubcat = normalizeTxnSubcategory(entry.item?.txn?.subcat);
+                      return (
+                        <details key={entry.key} style={{background:BG,border:`1px solid #fb923c33`,borderRadius:12,padding:"10px 12px"}}>
+                          <summary style={{cursor:"pointer",listStyle:"none"}}>
+                            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                              <span style={{fontSize:13,fontWeight:700,color:TEXT}}>{summarizeTxnDuplicateRef(entry.item?.txn)}</span>
+                              <Tag color="#fb923c">matches {otherAccountLabel.toLowerCase()}</Tag>
+                            </div>
+                            <div style={{fontSize:11,color:MUTED,marginTop:3}}>
+                              Found {entry.exactMatches.length} exact match{entry.exactMatches.length === 1 ? "" : "es"} in {otherAccountLabel}. Review before deleting from either account.
+                            </div>
+                          </summary>
+                          <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:12}}>
+                            <div style={{background:"#0f172a",border:`1px solid ${BORDER}`,borderRadius:10,padding:"9px 10px"}}>
+                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                                <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(entry.item?.txn)}</div>
+                                <Tag color="#38bdf8">{accountLabel}</Tag>
+                              </div>
+                              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+                                {entry.item?.txn?.cat && <Tag color={currentColor}>{entry.item.txn.cat}</Tag>}
+                                {currentSubcat && <Tag color={currentColor}>{currentSubcat}</Tag>}
+                              </div>
+                              {currentNote && <div style={{fontSize:11,color:DIM,marginTop:5}}>{currentNote}</div>}
+                            </div>
+                            {entry.exactMatches.map(match => {
+                              const matchColor = catColorsAll[match.txn?.cat] || "#94a3b8";
+                              const matchNote = getTxnDisplayNote(match.txn?.note);
+                              const matchSubcat = normalizeTxnSubcategory(match.txn?.subcat);
+                              return (
+                                <div key={match.id} style={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,padding:"9px 10px"}}>
+                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                                    <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(match.txn)}</div>
+                                    <Tag color="#a78bfa">{otherAccountLabel}</Tag>
+                                  </div>
+                                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+                                    {match.txn?.cat && <Tag color={matchColor}>{match.txn.cat}</Tag>}
+                                    {matchSubcat && <Tag color={matchColor}>{matchSubcat}</Tag>}
+                                  </div>
+                                  {matchNote && <div style={{fontSize:11,color:DIM,marginTop:5}}>{matchNote}</div>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </details>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {scan.possibleGroups.length > 0 && (
                 <div>
                   <div style={{fontSize:12,fontWeight:800,color:"#facc15",marginBottom:8,textTransform:"uppercase",letterSpacing:".4px"}}>
-                    Possible Duplicates
+                    Same-Account Possible Duplicates
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     {scan.possibleGroups.map(group => (
@@ -4041,6 +4107,65 @@ function ExistingTxnDuplicateTool({ src, isMobile }) {
                         </div>
                       </details>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {scan.crossAccountPossible.length > 0 && (
+                <div>
+                  <div style={{fontSize:12,fontWeight:800,color:"#facc15",marginBottom:8,textTransform:"uppercase",letterSpacing:".4px"}}>
+                    Cross-Account Possible Matches
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {scan.crossAccountPossible.map(entry => {
+                      const currentColor = catColorsAll[entry.item?.txn?.cat] || "#94a3b8";
+                      const currentNote = getTxnDisplayNote(entry.item?.txn?.note);
+                      const currentSubcat = normalizeTxnSubcategory(entry.item?.txn?.subcat);
+                      return (
+                        <details key={entry.key} style={{background:BG,border:`1px solid #facc1533`,borderRadius:12,padding:"10px 12px"}}>
+                          <summary style={{cursor:"pointer",listStyle:"none"}}>
+                            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                              <span style={{fontSize:13,fontWeight:700,color:TEXT}}>{summarizeTxnDuplicateRef(entry.item?.txn)}</span>
+                              <Tag color="#facc15">possible {otherAccountLabel.toLowerCase()} match</Tag>
+                            </div>
+                            <div style={{fontSize:11,color:MUTED,marginTop:3}}>
+                              Same date and amount with similar merchant text in {otherAccountLabel}. Review manually before deleting from either account.
+                            </div>
+                          </summary>
+                          <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:12}}>
+                            <div style={{background:"#0f172a",border:`1px solid ${BORDER}`,borderRadius:10,padding:"9px 10px"}}>
+                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                                <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(entry.item?.txn)}</div>
+                                <Tag color="#38bdf8">{accountLabel}</Tag>
+                              </div>
+                              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+                                {entry.item?.txn?.cat && <Tag color={currentColor}>{entry.item.txn.cat}</Tag>}
+                                {currentSubcat && <Tag color={currentColor}>{currentSubcat}</Tag>}
+                              </div>
+                              {currentNote && <div style={{fontSize:11,color:DIM,marginTop:5}}>{currentNote}</div>}
+                            </div>
+                            {entry.possibleMatches.map(match => {
+                              const matchColor = catColorsAll[match.txn?.cat] || "#94a3b8";
+                              const matchNote = getTxnDisplayNote(match.txn?.note);
+                              const matchSubcat = normalizeTxnSubcategory(match.txn?.subcat);
+                              return (
+                                <div key={match.id} style={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,padding:"9px 10px"}}>
+                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                                    <div style={{fontSize:12,color:TEXT,lineHeight:1.5}}>{summarizeTxnDuplicateRef(match.txn)}</div>
+                                    <Tag color="#a78bfa">{otherAccountLabel}</Tag>
+                                  </div>
+                                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+                                    {match.txn?.cat && <Tag color={matchColor}>{match.txn.cat}</Tag>}
+                                    {matchSubcat && <Tag color={matchColor}>{matchSubcat}</Tag>}
+                                  </div>
+                                  {matchNote && <div style={{fontSize:11,color:DIM,marginTop:5}}>{matchNote}</div>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </details>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -8237,7 +8362,35 @@ function buildPossibleTxnDuplicateGroups(candidates = []) {
   });
   return groups.sort((a, b) => b.count - a.count || a.items[0].originalIndex - b.items[0].originalIndex);
 }
-function buildExistingTxnDuplicateScan(txns = [], fallbackYear = null) {
+function buildCrossAccountTxnDuplicateGroups(currentCandidates = [], otherCandidates = []) {
+  const otherBySlot = new Map();
+  otherCandidates.forEach(item => {
+    if (!Number.isFinite(item?.year) || !item?.date || !Number.isFinite(item?.amountCents)) return;
+    const slotKey = `${item.year}|${item.date}|${item.amountCents}`;
+    const group = otherBySlot.get(slotKey) || [];
+    group.push(item);
+    otherBySlot.set(slotKey, group);
+  });
+  return currentCandidates
+    .flatMap(item => {
+      const slotKey = `${item.year}|${item.date}|${item.amountCents}`;
+      const sameSlot = otherBySlot.get(slotKey) || [];
+      if (!sameSlot.length) return [];
+      const exactMatches = item.exactKey ? sameSlot.filter(other => other.exactKey === item.exactKey) : [];
+      const possibleMatches = !exactMatches.length
+        ? sameSlot.filter(other => merchantSimilarity(item.merchant, other.merchant) >= 0.7)
+        : [];
+      if (!exactMatches.length && !possibleMatches.length) return [];
+      return [{
+        key: `${item.id}|cross-account`,
+        item,
+        exactMatches,
+        possibleMatches,
+      }];
+    })
+    .sort((a, b) => a.item.originalIndex - b.item.originalIndex);
+}
+function buildExistingTxnDuplicateScan(txns = [], fallbackYear = null, comparisonTxns = []) {
   const candidates = txns
     .map((txn, idx) => prepareStoredTxnDuplicateCandidate(txn, fallbackYear, idx))
     .filter(item =>
@@ -8270,6 +8423,22 @@ function buildExistingTxnDuplicateScan(txns = [], fallbackYear = null) {
     .sort((a, b) => b.count - a.count || a.keep.originalIndex - b.keep.originalIndex);
   const exactIds = new Set(exactGroups.flatMap(group => group.items.map(item => item.id)));
   const possibleGroups = buildPossibleTxnDuplicateGroups(nonSplitCandidates.filter(item => !exactIds.has(item.id)));
+  const crossAccountEligible = nonSplitCandidates.filter(item => item.txn?.cat !== "Transfer" && item.txn?.cat !== "Income");
+  const comparisonCandidates = comparisonTxns
+    .map((txn, idx) => prepareStoredTxnDuplicateCandidate(txn, fallbackYear, idx))
+    .filter(item =>
+      item.id
+      && item.date
+      && Number.isFinite(item.amountCents)
+      && Number.isFinite(item.year)
+      && !item.isSplitChild
+      && item.txn?.cat !== "Transfer"
+      && item.txn?.cat !== "Income"
+      && (!Number.isFinite(fallbackYear) || item.year === fallbackYear)
+    );
+  const crossAccountMatches = buildCrossAccountTxnDuplicateGroups(crossAccountEligible, comparisonCandidates);
+  const crossAccountExact = crossAccountMatches.filter(entry => entry.exactMatches.length > 0);
+  const crossAccountPossible = crossAccountMatches.filter(entry => entry.exactMatches.length === 0 && entry.possibleMatches.length > 0);
   const splitGroups = collectSplitDuplicateGroups(txns, fallbackYear)
     .filter(group =>
       group?.date
@@ -8303,6 +8472,8 @@ function buildExistingTxnDuplicateScan(txns = [], fallbackYear = null) {
     skippedSplitCount: candidates.length - nonSplitCandidates.length,
     exactGroups,
     possibleGroups,
+    crossAccountExact,
+    crossAccountPossible,
     splitOverlaps,
     removableCount: exactGroups.reduce((sum, group) => sum + group.remove.length, 0),
   };
